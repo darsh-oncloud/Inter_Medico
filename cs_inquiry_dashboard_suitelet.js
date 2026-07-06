@@ -989,11 +989,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             </div>
         </div>
 
-        <div class="meta">
-            <span>Total Results: <b id="totalCount">0</b></span>
-            <span>Default filter: Quantity On Hand &gt; 0</span>
-        </div>
-
         <div class="table-wrap" style="margin-top:14px;">
             <table>
                 <thead>
