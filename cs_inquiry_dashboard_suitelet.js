@@ -36,7 +36,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         itemHeader: 'custscript_img_item_header',
         itemLocations: 'custscript_img_item_locations',
         itemVendors: 'custscript_img_item_vendors',
-        binBalance: 'custscript_img_bin_balance'
+        binBalance: 'custscript_img_bin_balance',
+        inventoryNumbers: 'custscript_img_inventory_numbers'
     };
 
     function onRequest(context) {
@@ -498,7 +499,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 header: { columns: [], rows: [] },
                 locations: { columns: [], rows: [] },
                 vendors: { columns: [], rows: [] },
-                bins: { columns: [], rows: [] }
+                bins: { columns: [], rows: [] },
+                inventoryNumbers: { columns: [], rows: [] }
             };
         }
 
@@ -515,6 +517,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             }),
             bins: safeSection('Bin Balance', function () {
                 return getItemBins(itemId);
+            }),
+            inventoryNumbers: safeSection('Inventory Numbers', function () {
+                return getInventoryNumbers(itemId);
             })
         };
     }
@@ -560,6 +565,18 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         ]);
 
         return runDynamicSearch(binSearch, MAX_DETAIL_ROWS, false);
+    }
+
+    function getInventoryNumbers(itemId) {
+      const invNumSearch = loadConfiguredSearch('inventoryNumbers');
+
+      // For Inventory Number search, item filter should be "item".
+      // If your saved search is Item type by mistake, this will show section error only.
+      addDynamicExpression(invNumSearch, [
+          ['item', 'anyof', itemId]
+      ]);
+
+      return runDynamicSearch(invNumSearch, MAX_DETAIL_ROWS, false);
     }
 
     // =========================================================
@@ -1081,6 +1098,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 <button class="tab-btn active" data-tab="locationsTab">Locations</button>
                 <button class="tab-btn" data-tab="vendorsTab">Vendors</button>
                 <button class="tab-btn" data-tab="binsTab">Bin Numbers</button>
+                <button class="tab-btn" data-tab="inventoryNumbersTab">Inventory Numbers</button>
             </div>
 
             <div id="locationsTab" class="tab-panel active">
@@ -1118,10 +1136,21 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                     </table>
                 </div>
             </div>
-        </div>
-    </div>
 
-</div>
+          <div id="inventoryNumbersTab" class="tab-panel">
+              <div id="inventoryNumberError"></div>
+              <div class="table-wrap">
+                  <table>
+                      <thead>
+                          <tr id="inventoryNumberHeadRow"></tr>
+                     </thead>
+                    <tbody id="inventoryNumberRows"></tbody>
+                </table>
+             </div>
+          </div>   
+        </div>
+     </div>
+  </div>
 
 <script>
 (function () {
@@ -1416,6 +1445,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         showSectionError('locationError', '');
         showSectionError('vendorError', '');
         showSectionError('binError', '');
+        showSectionError('inventoryNumberError', '');
 
         document.getElementById('locationHeadRow').innerHTML = '<th>Loading</th>';
         document.getElementById('locationRows').innerHTML = emptyRow(1, 'Loading locations...');
@@ -1425,6 +1455,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         document.getElementById('binHeadRow').innerHTML = '<th>Loading</th>';
         document.getElementById('binRows').innerHTML = emptyRow(1, 'Loading bins...');
+
+        document.getElementById('inventoryNumberHeadRow').innerHTML = '<th>Loading</th>';
+        document.getElementById('inventoryNumberRows').innerHTML = emptyRow(1, 'Loading inventory numbers...');
 
         api('itemDetail', {
             itemId: itemId
@@ -1510,6 +1543,17 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             bins.rows || [],
             'No bin balance found for this item.',
             false
+        );
+
+        var inventoryNumbers = data.inventoryNumbers || {};
+        showSectionError('inventoryNumberError', inventoryNumbers.error || '');
+        renderHead('inventoryNumberHeadRow', inventoryNumbers.columns || []);
+        renderDynamicRows(
+           'inventoryNumberRows',
+           inventoryNumbers.columns || [],
+           inventoryNumbers.rows || [],
+           'No inventory numbers found for this item.',
+           false
         );
     }
 
