@@ -153,13 +153,12 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                     ['isinactive', 'is', 'F']
                 ],
                 columns: [
-                    // namenohierarchy = just this class's own name, no "Parent : Child" chain
-                    search.createColumn({ name: 'namenohierarchy', sort: search.Sort.ASC })
+                    search.createColumn({ name: 'name', sort: search.Sort.ASC })
                 ]
             }).run().each(function (r) {
                 rows.push({
                     value: r.id,
-                    text: r.getValue('namenohierarchy')
+                    text: r.getValue('name')
                 });
                 return true;
             });
@@ -181,13 +180,12 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                     ['isinactive', 'is', 'F']
                 ],
                 columns: [
-                    // namenohierarchy = just this subsidiary's own name, no "Parent : Child" chain
-                    search.createColumn({ name: 'namenohierarchy', sort: search.Sort.ASC })
+                    search.createColumn({ name: 'name', sort: search.Sort.ASC })
                 ]
             }).run().each(function (r) {
                 rows.push({
                     value: r.id,
-                    text: r.getValue('namenohierarchy')
+                    text: r.getValue('name')
                 });
                 return true;
             });
@@ -237,7 +235,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         if (params.q) {
             addAnd();
             filters.push([
-                ['nameornumber', 'contains', params.q],
+                ['itemid', 'contains', params.q],
                 'OR',
                 ['displayname', 'contains', params.q],
                 'OR',
@@ -255,10 +253,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 'displayname',
                 'salesdescription',
                 'type',
-                // joined to namenohierarchy so the grid shows the plain
-                // Class/Subsidiary name, not the full "Parent : Child" chain
-                search.createColumn({ name: 'namenohierarchy', join: 'class' }),
-                search.createColumn({ name: 'namenohierarchy', join: 'subsidiary' }),
+                'class',
+                'subsidiary',
                 'baseprice',
                 'quantityonhand',
                 'quantityavailable',
@@ -275,8 +271,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 displayName: r.getValue('displayname'),
                 description: r.getValue('salesdescription'),
                 type: r.getText('type'),
-                className: r.getValue({ name: 'namenohierarchy', join: 'class' }),
-                subsidiary: r.getValue({ name: 'namenohierarchy', join: 'subsidiary' }),
+                className: r.getText('class'),
+                subsidiary: r.getText('subsidiary'),
                 basePrice: r.getValue('baseprice'),
                 onHand: r.getValue('quantityonhand'),
                 available: r.getValue('quantityavailable'),
@@ -322,10 +318,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 'salesdescription',
                 'type',
                 'baseprice',
-                // joined to namenohierarchy so the header shows the plain
-                // Class/Subsidiary name, not the full "Parent : Child" chain
-                search.createColumn({ name: 'namenohierarchy', join: 'subsidiary' }),
-                search.createColumn({ name: 'namenohierarchy', join: 'class' }),
+                'subsidiary',
+                'class',
                 'costingmethod',
                 'stockunit',
                 'purchaseunit',
@@ -340,8 +334,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 description: r.getValue('salesdescription'),
                 type: r.getText('type'),
                 basePrice: r.getValue('baseprice'),
-                subsidiary: r.getValue({ name: 'namenohierarchy', join: 'subsidiary' }),
-                className: r.getValue({ name: 'namenohierarchy', join: 'class' }),
+                subsidiary: r.getText('subsidiary'),
+                className: r.getText('class'),
                 costingMethod: r.getText('costingmethod'),
                 stockUnit: r.getText('stockunit'),
                 purchaseUnit: r.getText('purchaseunit'),
