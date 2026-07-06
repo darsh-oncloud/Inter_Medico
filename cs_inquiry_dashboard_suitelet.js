@@ -235,7 +235,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         if (params.q) {
             addAnd();
             filters.push([
-                ['itemid', 'contains', params.q],
+                ['nameornumber', 'contains', params.q],
                 'OR',
                 ['displayname', 'contains', params.q],
                 'OR',
@@ -521,65 +521,106 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 <head>
 <meta charset="utf-8">
 <title>CS Item Inquiry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
     :root {
-        --bg: #f4f7fb;
-        --card: #ffffff;
-        --text: #152238;
-        --muted: #6d7890;
-        --border: #dce3ef;
-        --primary: #1f5eff;
-        --primary-dark: #1644b8;
-        --primary-soft: #eaf0ff;
-        --green: #0f8f5f;
-        --shadow: 0 10px 25px rgba(21,34,56,0.08);
-        --radius: 14px;
+        /* Paper + ink: quiet, cool-neutral working surface, not warm cream */
+        --paper: #EFF1EC;
+        --panel: #FFFFFF;
+        --ink: #14171C;
+        --muted: #667085;
+        --faint: #8B93A1;
+        --line: #DDE1DC;
+        --line-soft: #EAEDE9;
+
+        /* Signature accent: "specimen indigo" — a controlled instrument-panel blue,
+           not the generic SaaS #1f5eff */
+        --signal: #3D4A8A;
+        --signal-dark: #2B3568;
+        --signal-soft: #E8EAF5;
+
+        /* Status colors: active/good, and a caution amber used sparingly */
+        --good: #146C43;
+        --good-soft: #E3F3EA;
+        --warn: #96591A;
+        --warn-soft: #FBF0DE;
+
+        --shadow: 0 1px 2px rgba(20,23,28,.04), 0 8px 20px rgba(20,23,28,.06);
+        --radius: 12px;
+        --radius-sm: 8px;
     }
 
-    * {
-        box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
         margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font-family: Arial, Helvetica, sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
         font-size: 14px;
+        -webkit-font-smoothing: antialiased;
     }
+
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+    .display { font-family: 'Space Grotesk', sans-serif; }
 
     .page {
         max-width: 1450px;
         margin: 0 auto;
-        padding: 24px;
+        padding: 32px 28px 60px;
     }
 
     .topbar {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        margin-bottom: 18px;
+        margin-bottom: 22px;
+    }
+
+    .eyebrow {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        letter-spacing: .09em;
+        text-transform: uppercase;
+        color: var(--signal);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+    }
+
+    .eyebrow .dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--good);
+        box-shadow: 0 0 0 3px var(--good-soft);
     }
 
     .title {
-        font-size: 26px;
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 27px;
         font-weight: 700;
         margin: 0;
+        letter-spacing: -.01em;
     }
 
     .subtitle {
         color: var(--muted);
         margin-top: 6px;
         font-size: 13px;
+        max-width: 620px;
+        line-height: 1.5;
     }
 
     .card {
-        background: var(--card);
-        border: 1px solid var(--border);
+        background: var(--panel);
+        border: 1px solid var(--line);
         border-radius: var(--radius);
         box-shadow: var(--shadow);
-        padding: 18px;
+        padding: 20px;
         margin-bottom: 18px;
+        position: relative;
     }
 
     .filters {
@@ -591,57 +632,63 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
     label {
         display: block;
-        font-size: 11px;
+        font-size: 10.5px;
         text-transform: uppercase;
-        color: var(--muted);
-        letter-spacing: .04em;
+        color: var(--faint);
+        letter-spacing: .07em;
         font-weight: 700;
-        margin-bottom: 5px;
+        margin-bottom: 6px;
     }
 
-    input,
-    select {
+    input, select {
         width: 100%;
         height: 38px;
-        border: 1px solid var(--border);
-        border-radius: 9px;
-        padding: 8px 10px;
-        background: white;
-        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        padding: 8px 11px;
+        background: var(--panel);
+        color: var(--ink);
         outline: none;
+        font-family: 'Inter', sans-serif;
+        font-size: 13.5px;
+        transition: border-color .12s ease;
     }
 
-    input:focus,
-    select:focus {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px var(--primary-soft);
+    input::placeholder { color: var(--faint); }
+
+    input:focus, select:focus {
+        border-color: var(--signal);
+        box-shadow: 0 0 0 3px var(--signal-soft);
     }
 
     .btn {
         height: 38px;
-        border: 1px solid var(--border);
-        background: white;
-        border-radius: 9px;
-        padding: 0 14px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: var(--radius-sm);
+        padding: 0 15px;
         cursor: pointer;
-        font-weight: 700;
-        color: var(--text);
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--ink);
+        transition: border-color .12s ease, color .12s ease;
     }
 
     .btn:hover {
-        border-color: var(--primary);
-        color: var(--primary-dark);
+        border-color: var(--signal);
+        color: var(--signal-dark);
     }
 
     .btn-primary {
-        background: var(--primary);
-        border-color: var(--primary);
-        color: white;
+        background: var(--signal);
+        border-color: var(--signal);
+        color: #fff;
     }
 
     .btn-primary:hover {
-        background: var(--primary-dark);
-        color: white;
+        background: var(--signal-dark);
+        border-color: var(--signal-dark);
+        color: #fff;
     }
 
     .meta {
@@ -649,14 +696,18 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         justify-content: space-between;
         color: var(--muted);
         font-size: 12px;
-        margin-top: 12px;
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--line);
     }
+
+    .meta b { color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
 
     .table-wrap {
         width: 100%;
         overflow: auto;
-        border: 1px solid var(--border);
-        border-radius: 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
     }
 
     table {
@@ -666,55 +717,55 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     }
 
     th {
-        background: #f7f9fc;
+        background: #F7F8F5;
         color: var(--muted);
         text-align: left;
-        font-size: 11px;
+        font-size: 10.5px;
         text-transform: uppercase;
-        letter-spacing: .04em;
-        padding: 10px;
-        border-bottom: 1px solid var(--border);
+        letter-spacing: .06em;
+        font-weight: 700;
+        padding: 11px 12px;
+        border-bottom: 1px solid var(--line);
         white-space: nowrap;
     }
 
     td {
-        padding: 10px;
-        border-bottom: 1px solid #eef2f7;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line-soft);
         vertical-align: top;
+        font-size: 13px;
     }
 
-    tr:last-child td {
-        border-bottom: none;
-    }
+    tbody tr:nth-child(even) td { background: #FBFBFA; }
 
-    tr.clickable {
-        cursor: pointer;
-    }
+    tr:last-child td { border-bottom: none; }
 
-    tr.clickable:hover {
-        background: var(--primary-soft);
-    }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover td { background: var(--signal-soft); }
 
     .num {
         text-align: right;
+        font-family: 'IBM Plex Mono', monospace;
         font-variant-numeric: tabular-nums;
     }
 
     .badge {
         display: inline-block;
-        padding: 4px 9px;
+        padding: 3px 10px;
         border-radius: 999px;
-        background: #eef2f7;
+        background: var(--line-soft);
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 700;
+        letter-spacing: .02em;
     }
 
     .badge.active {
-        background: #e7f8f1;
-        color: var(--green);
+        background: var(--good-soft);
+        color: var(--good);
     }
 
+    /* ---- Item detail: styled like a specimen / requisition label ---- */
     .detail-head {
         display: flex;
         justify-content: space-between;
@@ -722,110 +773,125 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         gap: 16px;
     }
 
-    .item-title {
-        font-size: 24px;
-        font-weight: 800;
-        margin: 8px 0 4px;
+    .detail-head::before {
+        content: '';
+        position: absolute;
+        left: 0; top: 20px; bottom: 20px;
+        width: 4px;
+        border-radius: 0 3px 3px 0;
+        background: var(--signal);
     }
+
+    .item-title {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 25px;
+        font-weight: 700;
+        margin: 10px 0 6px;
+        letter-spacing: -.01em;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .item-title .badge { font-size: 11px; vertical-align: 2px; }
 
     .item-desc {
         color: var(--muted);
         max-width: 850px;
-        line-height: 1.4;
+        line-height: 1.5;
+        font-size: 13.5px;
     }
 
     .header-grid {
         display: grid;
         grid-template-columns: repeat(5, 1fr);
         gap: 12px;
-        margin-top: 16px;
+        margin-top: 18px;
     }
 
     .kv {
-        background: #f8fafc;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 12px;
+        background: #F8F9F6;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        padding: 12px 13px;
         min-height: 72px;
     }
 
     .kv .k {
-        font-size: 11px;
+        font-size: 10.5px;
         text-transform: uppercase;
-        color: var(--muted);
-        letter-spacing: .04em;
+        color: var(--faint);
+        letter-spacing: .06em;
         font-weight: 700;
-        margin-bottom: 6px;
+        margin-bottom: 7px;
     }
 
     .kv .v {
-        font-size: 14px;
-        font-weight: 700;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13.5px;
+        font-weight: 600;
         word-break: break-word;
+        color: var(--ink);
     }
 
+    /* Underlined tabs — precise, clinical, not pill-shaped */
     .tabs {
         display: flex;
-        gap: 8px;
-        margin-bottom: 14px;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 10px;
+        gap: 26px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid var(--line);
     }
 
     .tab-btn {
-        border: 1px solid var(--border);
-        background: white;
-        border-radius: 999px;
-        padding: 8px 14px;
+        border: none;
+        background: none;
+        padding: 10px 2px;
         cursor: pointer;
-        font-weight: 700;
+        font-weight: 600;
+        font-size: 13.5px;
         color: var(--muted);
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+        font-family: 'Inter', sans-serif;
     }
 
     .tab-btn.active {
-        color: var(--primary-dark);
-        background: var(--primary-soft);
-        border-color: #b8c9ff;
+        color: var(--signal-dark);
+        border-bottom-color: var(--signal);
     }
 
-    .tab-panel {
-        display: none;
-    }
-
-    .tab-panel.active {
-        display: block;
-    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
 
     .empty {
-        padding: 36px;
+        padding: 38px;
         text-align: center;
-        color: var(--muted);
+        color: var(--faint);
+        font-size: 13px;
     }
 
     .loading {
-        padding: 20px;
+        padding: 22px;
         color: var(--muted);
         text-align: center;
+        font-size: 13px;
     }
 
     .error {
-        background: #fff1f0;
-        color: #a8071a;
-        border: 1px solid #ffa39e;
-        padding: 12px;
-        border-radius: 10px;
-        margin-bottom: 12px;
+        background: var(--warn-soft);
+        color: var(--warn);
+        border: 1px solid #EBC994;
+        padding: 12px 14px;
+        border-radius: var(--radius-sm);
+        margin-bottom: 14px;
         display: none;
+        font-size: 13px;
+        font-weight: 500;
     }
 
     @media (max-width: 1000px) {
-        .filters {
-            grid-template-columns: 1fr 1fr;
-        }
-
-        .header-grid {
-            grid-template-columns: 1fr 1fr;
-        }
+        .filters { grid-template-columns: 1fr 1fr; }
+        .header-grid { grid-template-columns: 1fr 1fr; }
     }
 </style>
 </head>
@@ -834,6 +900,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
     <div class="topbar">
         <div>
+            <div class="eyebrow"><span class="dot"></span>Item &amp; Inventory Records</div>
             <h1 class="title">CS Item Inquiry</h1>
             <div class="subtitle">Search item records and view item header, location inventory, vendors, and bin balances.</div>
         </div>
