@@ -288,6 +288,44 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         }
     }
 
+    // Finds a column whose name/label matches one of the given terms (e.g.
+    // "on hand", "quantityonhand") and sorts dataSet.rows by it, descending,
+    // numeric-aware. Works regardless of which cN key that column landed on,
+    // since column position depends entirely on how the saved search is built.
+    // NOTE: this only reorders the rows this request already pulled back — see
+    // the caveat in searchItemsFiltered about MAX_GRID_ROWS truncation.
+    function sortRowsByColumnDesc(dataSet, matchTerms) {
+        const columns = dataSet.columns || [];
+        let targetKey = null;
+
+        for (let i = 0; i < columns.length; i++) {
+            const haystack = (String(columns[i].name || '') + ' ' + String(columns[i].label || '')).toLowerCase();
+
+            for (let j = 0; j < matchTerms.length; j++) {
+                if (haystack.indexOf(matchTerms[j]) !== -1) {
+                    targetKey = columns[i].key;
+                    break;
+                }
+            }
+
+            if (targetKey) {
+                break;
+            }
+        }
+
+        if (!targetKey) {
+            return dataSet;
+        }
+
+        dataSet.rows.sort(function (a, b) {
+            const av = Number(String(a[targetKey] || 0).replace(/,/g, '')) || 0;
+            const bv = Number(String(b[targetKey] || 0).replace(/,/g, '')) || 0;
+            return bv - av; // descending: highest quantity first
+        });
+
+        return dataSet;
+    }
+
     // =========================================================
     // FILTER OPTIONS
     // =========================================================
@@ -433,7 +471,20 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         const expression = buildAndExpression(dynamicFilters);
         addDynamicExpression(itemSearch, expression);
 
-        return runDynamicSearch(itemSearch, MAX_GRID_ROWS, true);
+        const result = runDynamicSearch(itemSearch, MAX_GRID_ROWS, true);
+
+        // Highest On Hand quantity first. IMPORTANT: this sorts only the rows
+        // already returned (capped at MAX_GRID_ROWS = 300). If the saved
+        // search itself pulls back items in an unrelated order, the true
+        // top-300-by-quantity items may not all be in that first batch.
+        // For a fully correct result, also set a descending sort on the
+        // Quantity On Hand column inside the saved search itself (Lists >
+        // Search > Saved Searches > your item grid search > Results tab) —
+        // that way NetSuite hands back rows already in the right order and
+        // this sort just re-confirms it.
+        sortRowsByColumnDesc(result, ['on hand', 'onhand', 'quantityonhand']);
+
+        return result;
     }
 
     // =========================================================
