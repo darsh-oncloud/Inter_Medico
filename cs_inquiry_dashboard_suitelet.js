@@ -573,7 +573,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
       // For Inventory Number search, item filter should be "item".
       // If your saved search is Item type by mistake, this will show section error only.
       addDynamicExpression(invNumSearch, [
-          ['item', 'anyof', itemId]
+          ['internalid', 'anyof', itemId]
       ]);
 
       return runDynamicSearch(invNumSearch, MAX_DETAIL_ROWS, false);
