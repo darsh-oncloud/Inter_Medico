@@ -1,544 +1,1364 @@
 /**
- * cs_item_inquiry_suitelet.js
+ * CS Item Inquiry Suitelet
  *
- * CS Item Inquiry — filter-driven item browser + record-style item detail.
+ * For now:
+ * - Searches are hardcoded in the script.
+ * - Later you can move each search to saved search parameters.
  *
- * WHAT THIS IS
- * A single Suitelet page:
- *   1. A filter bar (Item Type / Class / Subsidiary / free-text search) that
- *      re-runs the item search in real time — no "Apply" button, no reload.
- *   2. A results grid. Click a row to open the item detail.
- *   3. Item detail is laid out like the native NetSuite item record:
- *      a header block, then tabs for Locations / Vendors / Bin Numbers,
- *      each rendered as a sublist-style table.
- *
- * TESTING NOTE
- * getItemFullDetail() defaults to internal id '9201' (your test item) when no
- * itemId is passed, exactly like the script you pasted. Once you click a row
- * in the grid, the real itemId is sent instead — so this is already wired for
- * production, the hardcode is only a fallback for testing this file on its own.
- *
- * VERIFY markers below flag anything that depends on your account's setup
- * (bin management on/off, exact item types in use, class vs. department, etc.)
- * — check these against a live record before this goes out to users.
+ * Page includes:
+ * - Item filter
+ * - Subsidiary filter
+ * - Item Type filter
+ * - Class filter
+ * - Search text filter
+ * - Result grid
+ * - Item detail page with:
+ *   1. Header
+ *   2. Locations tab
+ *   3. Vendors tab
+ *   4. Bin Numbers tab
  *
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  * @NModuleScope SameAccount
  */
-define(['N/search', 'N/url', 'N/runtime', 'N/log'],
-  (search, url, runtime, log) => {
+define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runtime, log) {
 
-    // -----------------------------------------------------------------------
-    // Entry point
-    // -----------------------------------------------------------------------
-    const onRequest = (context) => {
-      const { request, response } = context;
+    const DEFAULT_ITEM_ID = '9201';
+    const MAX_ITEM_OPTIONS = 500;
+    const MAX_GRID_ROWS = 300;
+    const MAX_DETAIL_ROWS = 1000;
 
-      if (request.method === 'GET' && !request.parameters.action) {
-        response.write(renderPage());
-        return;
-      }
+    function onRequest(context) {
+        const request = context.request;
+        const response = context.response;
+        const action = request.parameters.action;
 
-      const action = request.parameters.action;
-      try {
-        switch (action) {
-          case 'filterOptions':
-            return sendJson(response, getFilterOptions());
-          case 'itemSearch':
-            return sendJson(response, searchItemsFiltered(request.parameters));
-          case 'itemDetail':
-            return sendJson(response, getItemFullDetail(request.parameters.itemId));
-          default:
-            return sendJson(response, { error: 'Unknown action: ' + action });
+        if (request.method === 'GET' && !action) {
+            response.write(renderPage());
+            return;
         }
-      } catch (e) {
-        log.error('CS Item Inquiry error [' + action + ']', e);
-        return sendJson(response, { error: e.message || String(e) });
-      }
-    };
+
+        try {
+            if (action === 'filterOptions') {
+                sendJson(response, getFilterOptions());
+                return;
+            }
+
+            if (action === 'itemSearch') {
+                sendJson(response, searchItemsFiltered(request.parameters));
+                return;
+            }
+
+            if (action === 'itemDetail') {
+                sendJson(response, getItemFullDetail(request.parameters.itemId));
+                return;
+            }
+
+            sendJson(response, {
+                error: 'Unknown action: ' + action
+            });
+
+        } catch (e) {
+            log.error('CS Item Inquiry Error', {
+                action: action,
+                message: e.message,
+                stack: e.stack
+            });
+
+            sendJson(response, {
+                error: e.message || String(e)
+            });
+        }
+    }
 
     function sendJson(response, obj) {
-      response.setHeader({ name: 'Content-Type', value: 'application/json' });
-      response.write(JSON.stringify(obj));
+        response.setHeader({
+            name: 'Content-Type',
+            value: 'application/json'
+        });
+        response.write(JSON.stringify(obj || {}));
     }
 
-    // -----------------------------------------------------------------------
-    // Filter dropdown data — Item Type / Class / Subsidiary
-    // -----------------------------------------------------------------------
+    // =========================================================
+    // FILTER OPTIONS
+    // =========================================================
+
     function getFilterOptions() {
-      // Item Type: static list of the item record types actually searchable
-      // under search.Type.ITEM's "type" column. VERIFY this matches the item
-      // types actually in use in this account — trim or extend as needed.
-      const itemTypes = [
-        { value: 'InvtPart', text: 'Inventory Item' },
-        { value: 'LotNumberedInventoryItem', text: 'Lot Numbered Inventory Item' },
-        { value: 'SerializedInventoryItem', text: 'Serialized Inventory Item' },
-        { value: 'Assembly', text: 'Assembly / Bill of Materials' },
-        { value: 'Kit', text: 'Kit / Package' },
-        { value: 'NonInvtPart', text: 'Non-Inventory Item' },
-        { value: 'Service', text: 'Service' }
-      ];
-
-      const classes = [];
-      search.create({
-        type: 'classification',
-        filters: [['isinactive', 'is', 'F']],
-        columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
-      }).run().each((r) => {
-        classes.push({ value: r.id, text: r.getValue('name') });
-        return true;
-      });
-
-      const subsidiaries = [];
-      search.create({
-        type: 'subsidiary',
-        filters: [['isinactive', 'is', 'F']],
-        columns: [search.createColumn({ name: 'name', sort: search.Sort.ASC })]
-      }).run().each((r) => {
-        subsidiaries.push({ value: r.id, text: r.getValue('name') });
-        return true;
-      });
-
-      return { itemTypes, classes, subsidiaries };
+        return {
+            items: getItemOptions(),
+            itemTypes: getItemTypeOptions(),
+            classes: getClassOptions(),
+            subsidiaries: getSubsidiaryOptions()
+        };
     }
 
-    // -----------------------------------------------------------------------
-    // Results grid — combines all active filters, re-run on every change
-    // -----------------------------------------------------------------------
+    function getItemTypeOptions() {
+        return [
+            { value: 'InvtPart', text: 'Inventory Item' },
+            { value: 'Assembly', text: 'Assembly Item' },
+            { value: 'Kit', text: 'Kit / Package' },
+            { value: 'NonInvtPart', text: 'Non-Inventory Item' },
+            { value: 'Service', text: 'Service Item' },
+            { value: 'OthCharge', text: 'Other Charge Item' },
+            { value: 'Description', text: 'Description Item' },
+            { value: 'Discount', text: 'Discount Item' },
+            { value: 'Markup', text: 'Markup Item' },
+            { value: 'Payment', text: 'Payment Item' },
+            { value: 'Subtotal', text: 'Subtotal Item' }
+        ];
+    }
+
+    function getItemOptions() {
+        const rows = [];
+
+        try {
+            search.create({
+                type: search.Type.ITEM,
+                filters: [
+                    ['isinactive', 'is', 'F']
+                ],
+                columns: [
+                    search.createColumn({ name: 'itemid', sort: search.Sort.ASC }),
+                    'displayname',
+                    'type'
+                ]
+            }).run().each(function (r) {
+                const itemId = r.getValue('itemid') || '';
+                const displayName = r.getValue('displayname') || '';
+                const type = r.getText('type') || '';
+
+                rows.push({
+                    value: r.id,
+                    text: itemId + (displayName ? ' - ' + displayName : '') + (type ? ' [' + type + ']' : '')
+                });
+
+                return rows.length < MAX_ITEM_OPTIONS;
+            });
+
+        } catch (e) {
+            log.error('getItemOptions failed', e);
+        }
+
+        return rows;
+    }
+
+    function getClassOptions() {
+        const rows = [];
+
+        try {
+            search.create({
+                type: 'classification',
+                filters: [
+                    ['isinactive', 'is', 'F']
+                ],
+                columns: [
+                    search.createColumn({ name: 'name', sort: search.Sort.ASC })
+                ]
+            }).run().each(function (r) {
+                rows.push({
+                    value: r.id,
+                    text: r.getValue('name')
+                });
+                return true;
+            });
+
+        } catch (e) {
+            log.error('getClassOptions failed', e);
+        }
+
+        return rows;
+    }
+
+    function getSubsidiaryOptions() {
+        const rows = [];
+
+        try {
+            search.create({
+                type: 'subsidiary',
+                filters: [
+                    ['isinactive', 'is', 'F']
+                ],
+                columns: [
+                    search.createColumn({ name: 'name', sort: search.Sort.ASC })
+                ]
+            }).run().each(function (r) {
+                rows.push({
+                    value: r.id,
+                    text: r.getValue('name')
+                });
+                return true;
+            });
+
+        } catch (e) {
+            log.error('getSubsidiaryOptions failed', e);
+        }
+
+        return rows;
+    }
+
+    // =========================================================
+    // MAIN ITEM GRID SEARCH
+    // =========================================================
+
     function searchItemsFiltered(params) {
-      const filters = [];
+        const filters = [
+            ['isinactive', 'is', 'F']
+        ];
 
-      if (params.itemType) {
-        if (filters.length) filters.push('AND');
-        filters.push(['type', 'anyof', params.itemType]);
-      }
-      if (params.classId) {
-        if (filters.length) filters.push('AND');
-        filters.push(['class', 'anyof', params.classId]);
-      }
-      if (params.subsidiaryId) {
-        if (filters.length) filters.push('AND');
-        filters.push(['subsidiary', 'anyof', params.subsidiaryId]);
-      }
-      if (params.q) {
-        if (filters.length) filters.push('AND');
-        filters.push(['nameornumber', 'contains', params.q]);
-      }
+        function addAnd() {
+            if (filters.length) {
+                filters.push('AND');
+            }
+        }
 
-      const s = search.create({
-        type: search.Type.ITEM,
-        filters,
-        columns: [
-          search.createColumn({ name: 'itemid', sort: search.Sort.ASC }),
-          'displayname', 'salesdescription', 'type', 'class', 'subsidiary',
-          'isinactive', 'quantityonhand', 'quantityavailable'
-        ]
-      });
+        if (params.itemId) {
+            addAnd();
+            filters.push(['internalid', 'anyof', params.itemId]);
+        }
 
-      const total = s.runPaged().count;
-      const out = [];
-      s.run().each((r) => {
-        out.push({
-          internalId: r.id,
-          itemId: r.getValue('itemid'),
-          displayName: r.getValue('displayname'),
-          description: r.getValue('salesdescription'),
-          type: r.getText('type'),
-          className: r.getText('class'),
-          subsidiary: r.getText('subsidiary'),
-          status: r.getValue('isinactive') ? 'Inactive' : 'Active',
-          onHand: r.getValue('quantityonhand'),
-          available: r.getValue('quantityavailable')
+        if (params.itemType) {
+            addAnd();
+            filters.push(['type', 'anyof', params.itemType]);
+        }
+
+        if (params.classId) {
+            addAnd();
+            filters.push(['class', 'anyof', params.classId]);
+        }
+
+        if (params.subsidiaryId) {
+            addAnd();
+            filters.push(['subsidiary', 'anyof', params.subsidiaryId]);
+        }
+
+        if (params.q) {
+            addAnd();
+            filters.push([
+                ['nameornumber', 'contains', params.q],
+                'OR',
+                ['displayname', 'contains', params.q],
+                'OR',
+                ['salesdescription', 'contains', params.q]
+            ]);
+        }
+
+        const rows = [];
+
+        const itemSearch = search.create({
+            type: search.Type.ITEM,
+            filters: filters,
+            columns: [
+                search.createColumn({ name: 'itemid', sort: search.Sort.ASC }),
+                'displayname',
+                'salesdescription',
+                'type',
+                'class',
+                'subsidiary',
+                'baseprice',
+                'quantityonhand',
+                'quantityavailable',
+                'isinactive'
+            ]
         });
-        return out.length < 200; // cap the grid; narrow filters to see more
-      });
 
-      return { total, rows: out };
+        const total = itemSearch.runPaged().count;
+
+        itemSearch.run().each(function (r) {
+            rows.push({
+                internalId: r.id,
+                itemId: r.getValue('itemid'),
+                displayName: r.getValue('displayname'),
+                description: r.getValue('salesdescription'),
+                type: r.getText('type'),
+                className: r.getText('class'),
+                subsidiary: r.getText('subsidiary'),
+                basePrice: r.getValue('baseprice'),
+                onHand: r.getValue('quantityonhand'),
+                available: r.getValue('quantityavailable'),
+                status: r.getValue('isinactive') ? 'Inactive' : 'Active'
+            });
+
+            return rows.length < MAX_GRID_ROWS;
+        });
+
+        return {
+            total: total,
+            rows: rows
+        };
     }
 
-    // -----------------------------------------------------------------------
-    // Item detail — fully driven by the search's OWN column list.
-    //
-    // HOW THIS WORKS
-    // We don't hand-list columns in the render code. We load a search (right
-    // now built inline from the exact script you pasted — see
-    // buildInlineDetailSearch below — later just a saved search loaded by id)
-    // and read its .columns straight off the search object. Whatever
-    // labels/columns that search has is what gets sent to the page and
-    // rendered as table headers. Add a column to the search later and it
-    // shows up automatically — this file does not need to change.
-    //
-    // SWITCHING TO A REAL SAVED SEARCH
-    // 1. In NetSuite, build/adjust the search the way you want it (Lists >
-    //    Search > Saved Searches > New, type = Item), save it, note its id
-    //    (e.g. "customsearch1783350611743").
-    // 2. Set DETAIL_SEARCH_ID below to that id. That's the only code change,
-    //    ever, needed for adding/removing/relabeling columns from then on.
-    // -----------------------------------------------------------------------
-    const DETAIL_SEARCH_ID = null; // e.g. 'customsearch1783350611743' once saved
+    // =========================================================
+    // ITEM DETAIL
+    // =========================================================
 
-    function loadDetailSearch() {
-      return DETAIL_SEARCH_ID
-        ? search.load({ id: DETAIL_SEARCH_ID })
-        : buildInlineDetailSearch();
-    }
-
-    // Exactly the search you pasted, minus the hardcoded item filter (that's
-    // applied per-request below instead). This is the "for now hardcoded"
-    // stand-in until you save the real search and set DETAIL_SEARCH_ID above.
-    function buildInlineDetailSearch() {
-      return search.create({
-        type: 'item',
-        columns: [
-          search.createColumn({ name: 'itemid', label: 'Name' }),
-          search.createColumn({ name: 'displayname', label: 'Display Name' }),
-          search.createColumn({ name: 'salesdescription', label: 'Description' }),
-          search.createColumn({ name: 'type', label: 'Type' }),
-          search.createColumn({ name: 'inventorylocation', label: 'Inventory Warehouse' }),
-          search.createColumn({ name: 'locationquantityavailable', label: 'Warehouse Available' }),
-          search.createColumn({ name: 'locationaveragecost', label: 'Warehouse Average Cost' }),
-          search.createColumn({ name: 'locationquantitybackordered', label: 'Warehouse Back Ordered' }),
-          search.createColumn({ name: 'locationquantitycommitted', label: 'Warehouse Committed' }),
-          search.createColumn({ name: 'locationtoresvcommitted', label: 'Warehouse Committed To Reservation' }),
-          search.createColumn({ name: 'locationquantityintransit', label: 'Warehouse In Transit' }),
-          search.createColumn({ name: 'locationquantityonhand', label: 'Warehouse On Hand' }),
-          search.createColumn({ name: 'locationquantityonorder', label: 'Warehouse On Order' }),
-          search.createColumn({ name: 'locationtotalvalue', label: 'Warehouse Total Value' }),
-          search.createColumn({ name: 'locationqtyintransitext', label: 'Warehouse External Quantity In Transit' }),
-          search.createColumn({ name: 'vendor', label: 'Preferred Vendor' }),
-          search.createColumn({ name: 'vendorcode', label: 'Vendor Code' }),
-          search.createColumn({ name: 'vendorname', label: 'Vendor Name' }),
-          search.createColumn({ name: 'vendorcost', label: 'Vendor Price' }),
-          search.createColumn({ name: 'vendorcostentered', label: 'Vendor Price (Entered)' }),
-          search.createColumn({ name: 'vendorpricecurrency', label: 'Vendor Price Currency' }),
-          search.createColumn({ name: 'vendreturnvarianceaccount', label: 'Vendor Return Variance Account' }),
-          search.createColumn({ name: 'vendorschedule', label: 'Vendor Schedule' }),
-          search.createColumn({ name: 'othervendor', label: 'Vendor' })
-        ]
-      });
-    }
-
-    // Runs the detail search filtered to one item, and returns both the
-    // column definitions (id + label, straight off the search) and the rows
-    // (cell values keyed to those same ids) — the page just renders whatever
-    // comes back, it never assumes specific column names.
-    //
-    // NOTE ON BLANK "Inventory Warehouse" cells: this search mixes location
-    // columns, vendor columns, and (per your screenshot) bin/quality-status
-    // columns in one item search. NetSuite returns the cross-product of those
-    // joins, so a row only has non-blank warehouse numbers when it's the
-    // specific location combination — vendor-only or bin-only rows show
-    // blank warehouse fields, and vice versa. That's expected NetSuite
-    // behavior for a search built this way, not a loading bug. A clean
-    // one-row-per-location result needs a search with only location columns
-    // (no vendor/bin joins mixed in).
     function getItemFullDetail(itemId) {
-      // TEST HARDCODE: falls back to your sample item (9201) when nothing is
-      // selected yet. Once wired to the grid, a real itemId is always passed.
-      itemId = itemId || '9201';
+        itemId = itemId || DEFAULT_ITEM_ID;
 
-      const s = loadDetailSearch();
-      s.filters = [search.createFilter({ name: 'internalid', operator: search.Operator.ANYOF, values: [itemId] })];
+        return {
+            itemId: itemId,
+            header: getItemHeader(itemId),
+            locations: getItemLocations(itemId),
+            vendors: getItemVendors(itemId),
+            bins: getItemBins(itemId)
+        };
+    }
 
-      const columns = s.columns.map((c, i) => ({
-        key: 'c' + i,
-        label: c.label || (c.name + (c.join ? ' (' + c.join + ')' : ''))
-      }));
+    function getItemHeader(itemId) {
+        let data = {};
 
-      const rows = [];
-      s.run().each((r) => {
-        const row = {};
-        s.columns.forEach((c, i) => {
-          row['c' + i] = r.getText(c) || r.getValue(c);
+        search.create({
+            type: search.Type.ITEM,
+            filters: [
+                ['internalid', 'anyof', itemId]
+            ],
+            columns: [
+                'itemid',
+                'displayname',
+                'salesdescription',
+                'type',
+                'baseprice',
+                'subsidiary',
+                'class',
+                'costingmethod',
+                'stockunit',
+                'purchaseunit',
+                'saleunit',
+                'isinactive'
+            ]
+        }).run().each(function (r) {
+            data = {
+                internalId: r.id,
+                itemName: r.getValue('itemid'),
+                displayName: r.getValue('displayname'),
+                description: r.getValue('salesdescription'),
+                type: r.getText('type'),
+                basePrice: r.getValue('baseprice'),
+                subsidiary: r.getText('subsidiary'),
+                className: r.getText('class'),
+                costingMethod: r.getText('costingmethod'),
+                stockUnit: r.getText('stockunit'),
+                purchaseUnit: r.getText('purchaseunit'),
+                saleUnit: r.getText('saleunit'),
+                status: r.getValue('isinactive') ? 'Inactive' : 'Active'
+            };
+
+            return false;
         });
-        rows.push(row);
-        return true;
-      });
 
-      return { columns, rows };
+        return data;
     }
 
-    // -----------------------------------------------------------------------
-    // Page shell
-    // -----------------------------------------------------------------------
+    function getItemLocations(itemId) {
+        const rows = [];
+        const seen = {};
+
+        try {
+            search.create({
+                type: search.Type.ITEM,
+                filters: [
+                    ['internalid', 'anyof', itemId],
+                    'AND',
+                    ['inventorylocation', 'noneof', '@NONE@']
+                ],
+                columns: [
+                    search.createColumn({ name: 'inventorylocation', sort: search.Sort.ASC }),
+                    'locationquantityonhand',
+                    'locationquantityavailable',
+                    'locationquantitycommitted',
+                    'locationtoresvcommitted',
+                    'locationquantitybackordered',
+                    'locationquantityintransit',
+                    'locationquantityonorder',
+                    'locationaveragecost',
+                    'locationtotalvalue',
+                    'locationqtyintransitext'
+                ]
+            }).run().each(function (r) {
+                const locationId = r.getValue('inventorylocation');
+
+                if (!locationId || seen[locationId]) {
+                    return true;
+                }
+
+                seen[locationId] = true;
+
+                rows.push({
+                    location: r.getText('inventorylocation'),
+                    onHand: r.getValue('locationquantityonhand'),
+                    available: r.getValue('locationquantityavailable'),
+                    committed: r.getValue('locationquantitycommitted'),
+                    committedToReservation: r.getValue('locationtoresvcommitted'),
+                    backOrdered: r.getValue('locationquantitybackordered'),
+                    inTransit: r.getValue('locationquantityintransit'),
+                    onOrder: r.getValue('locationquantityonorder'),
+                    averageCost: r.getValue('locationaveragecost'),
+                    totalValue: r.getValue('locationtotalvalue'),
+                    externalInTransit: r.getValue('locationqtyintransitext')
+                });
+
+                return rows.length < MAX_DETAIL_ROWS;
+            });
+
+        } catch (e) {
+            log.error('getItemLocations failed', e);
+        }
+
+        return rows;
+    }
+
+    function getItemVendors(itemId) {
+        const rows = [];
+        const seen = {};
+
+        try {
+            search.create({
+                type: search.Type.ITEM,
+                filters: [
+                    ['internalid', 'anyof', itemId]
+                ],
+                columns: [
+                    'vendor',
+                    'vendorcode',
+                    'vendorname',
+                    'vendorcost',
+                    'vendorcostentered',
+                    'vendorpricecurrency',
+                    'vendreturnvarianceaccount',
+                    'vendorschedule',
+                    'othervendor'
+                ]
+            }).run().each(function (r) {
+                const vendorKey =
+                    r.getValue('othervendor') ||
+                    r.getValue('vendor') ||
+                    r.getValue('vendorname');
+
+                if (!vendorKey || seen[vendorKey]) {
+                    return true;
+                }
+
+                seen[vendorKey] = true;
+
+                rows.push({
+                    preferredVendor: r.getText('vendor'),
+                    vendor: r.getText('othervendor'),
+                    vendorCode: r.getValue('vendorcode'),
+                    vendorName: r.getValue('vendorname'),
+                    vendorCost: r.getValue('vendorcost'),
+                    vendorCostEntered: r.getValue('vendorcostentered'),
+                    currency: r.getText('vendorpricecurrency'),
+                    returnVarianceAccount: r.getText('vendreturnvarianceaccount'),
+                    vendorSchedule: r.getText('vendorschedule')
+                });
+
+                return rows.length < MAX_DETAIL_ROWS;
+            });
+
+        } catch (e) {
+            log.error('getItemVendors failed', e);
+        }
+
+        return rows;
+    }
+
+    function getItemBins(itemId) {
+        const rows = [];
+
+        try {
+            search.create({
+                type: 'inventorybalance',
+                filters: [
+                    ['item', 'anyof', itemId]
+                ],
+                columns: [
+                    search.createColumn({ name: 'location', sort: search.Sort.ASC }),
+                    search.createColumn({ name: 'binnumber', sort: search.Sort.ASC }),
+                    'inventorynumber',
+                    'status',
+                    'onhand',
+                    'available'
+                ]
+            }).run().each(function (r) {
+                rows.push({
+                    location: r.getText('location'),
+                    binNumber: r.getText('binnumber'),
+                    lotSerialNumber: r.getText('inventorynumber'),
+                    status: r.getText('status'),
+                    onHand: r.getValue('onhand'),
+                    available: r.getValue('available')
+                });
+
+                return rows.length < MAX_DETAIL_ROWS;
+            });
+
+        } catch (e) {
+            log.error('getItemBins failed', e);
+        }
+
+        return rows;
+    }
+
+    // =========================================================
+    // PAGE
+    // =========================================================
+
     function renderPage() {
-      const scriptId = runtime.getCurrentScript().id;
-      const deploymentId = runtime.getCurrentScript().deploymentId;
-      const suiteletUrl = url.resolveScript({ scriptId, deploymentId, returnExternalUrl: false });
-      return PAGE_HTML.split('__SUITELET_URL__').join(suiteletUrl);
-    }
+        const scriptObj = runtime.getCurrentScript();
 
-    const PAGE_HTML = buildHtml();
+        const suiteletUrl = url.resolveScript({
+            scriptId: scriptObj.id,
+            deploymentId: scriptObj.deploymentId,
+            returnExternalUrl: false
+        });
+
+        return buildHtml().replace('__SUITELET_URL_JSON__', JSON.stringify(suiteletUrl));
+    }
 
     function buildHtml() {
-      return `<!doctype html>
-<html lang="en">
+        return `<!doctype html>
+<html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CS Item Inquiry</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root{
-    --bg:#F2F6F5; --surface:#FFFFFF; --ink:#122523; --muted:#5C7472; --line:#DCE6E3;
-    --teal:#0E6E62; --teal-dark:#0A4F46; --teal-tint:#E4F1EE;
-    --radius:10px; --shadow:0 1px 2px rgba(18,37,35,.06), 0 8px 24px rgba(18,37,35,.05);
-    font-size:15px;
-  }
-  *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
-  body{ background:var(--bg); color:var(--ink); font-family:'Inter',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
-  .mono{ font-family:'IBM Plex Mono',ui-monospace,monospace; font-variant-numeric:tabular-nums; }
-  .display{ font-family:'Space Grotesk',sans-serif; }
+    :root {
+        --bg: #f4f7fb;
+        --card: #ffffff;
+        --text: #152238;
+        --muted: #6d7890;
+        --border: #dce3ef;
+        --primary: #1f5eff;
+        --primary-dark: #1644b8;
+        --primary-soft: #eaf0ff;
+        --green: #0f8f5f;
+        --shadow: 0 10px 25px rgba(21,34,56,0.08);
+        --radius: 14px;
+    }
 
-  /* Centered, full-width main column — no side filter panel */
-  .page{ max-width:1200px; margin:0 auto; padding:28px 24px 60px; }
-  h1.page-title{ font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:600; margin:2px 0 2px; }
-  .page-sub{ color:var(--muted); font-size:13px; margin-bottom:20px; }
+    * {
+        box-sizing: border-box;
+    }
 
-  .card{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px; margin-bottom:18px; }
+    body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 14px;
+    }
 
-  /* Filter bar: full width, all filters in one row, real-time */
-  .filter-bar{ display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }
-  .filter-field{ display:flex; flex-direction:column; gap:5px; min-width:180px; flex:1; }
-  .filter-field.grow{ flex:2; min-width:260px; }
-  .filter-field label{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; }
-  .filter-field select, .filter-field input{
-    padding:9px 10px; border-radius:8px; border:1px solid var(--line); font-size:13.5px; color:var(--ink); background:#fff; outline:none;
-  }
-  .filter-field select:focus, .filter-field input:focus{ border-color:var(--teal); }
-  .filter-meta{ display:flex; justify-content:space-between; align-items:center; margin:14px 2px 0; font-size:12.5px; color:var(--muted); }
-  .filter-meta b{ color:var(--ink); }
-  .btn{ font-size:12.5px; font-weight:600; padding:8px 12px; border-radius:7px; cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--ink); }
-  .btn:hover{ border-color:var(--teal); color:var(--teal-dark); }
-  .btn.link{ border:none; background:none; color:var(--teal-dark); padding:0; text-decoration:underline; }
+    .page {
+        max-width: 1450px;
+        margin: 0 auto;
+        padding: 24px;
+    }
 
-  table{ width:100%; border-collapse:collapse; font-size:13px; }
-  thead th{ text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); padding:9px 10px; border-bottom:1px solid var(--line); }
-  tbody td{ padding:9px 10px; border-bottom:1px solid #EEF3F2; }
-  tbody tr.clickable{ cursor:pointer; }
-  tbody tr.clickable:hover{ background:var(--teal-tint); }
-  .num{ text-align:right; font-family:'IBM Plex Mono',monospace; }
-  .empty{ padding:34px 10px; text-align:center; color:var(--muted); font-size:13px; }
-  .badge{ font-size:11px; padding:3px 8px; border-radius:999px; font-weight:600; background:#EEF3F2; color:var(--muted); }
-  .badge.active{ background:var(--teal-tint); color:var(--teal-dark); }
+    .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 18px;
+    }
 
-  /* Item detail — one dynamic table, columns driven by the search itself */
-  .kv-row{ display:flex; flex-direction:column; gap:3px; padding:4px 0; }
-  .kv-row .k{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
-  .kv-row .v{ font-weight:600; font-size:14px; }
+    .title {
+        font-size: 26px;
+        font-weight: 700;
+        margin: 0;
+    }
+
+    .subtitle {
+        color: var(--muted);
+        margin-top: 6px;
+        font-size: 13px;
+    }
+
+    .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 18px;
+        margin-bottom: 18px;
+    }
+
+    .filters {
+        display: grid;
+        grid-template-columns: 2fr 1.3fr 1fr 1fr 1fr auto;
+        gap: 12px;
+        align-items: end;
+    }
+
+    label {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--muted);
+        letter-spacing: .04em;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
+
+    input,
+    select {
+        width: 100%;
+        height: 38px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 8px 10px;
+        background: white;
+        color: var(--text);
+        outline: none;
+    }
+
+    input:focus,
+    select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    .btn {
+        height: 38px;
+        border: 1px solid var(--border);
+        background: white;
+        border-radius: 9px;
+        padding: 0 14px;
+        cursor: pointer;
+        font-weight: 700;
+        color: var(--text);
+    }
+
+    .btn:hover {
+        border-color: var(--primary);
+        color: var(--primary-dark);
+    }
+
+    .btn-primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: var(--primary-dark);
+        color: white;
+    }
+
+    .meta {
+        display: flex;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 12px;
+    }
+
+    .table-wrap {
+        width: 100%;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 900px;
+    }
+
+    th {
+        background: #f7f9fc;
+        color: var(--muted);
+        text-align: left;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+    }
+
+    td {
+        padding: 10px;
+        border-bottom: 1px solid #eef2f7;
+        vertical-align: top;
+    }
+
+    tr:last-child td {
+        border-bottom: none;
+    }
+
+    tr.clickable {
+        cursor: pointer;
+    }
+
+    tr.clickable:hover {
+        background: var(--primary-soft);
+    }
+
+    .num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 4px 9px;
+        border-radius: 999px;
+        background: #eef2f7;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .badge.active {
+        background: #e7f8f1;
+        color: var(--green);
+    }
+
+    .detail-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+    }
+
+    .item-title {
+        font-size: 24px;
+        font-weight: 800;
+        margin: 8px 0 4px;
+    }
+
+    .item-desc {
+        color: var(--muted);
+        max-width: 850px;
+        line-height: 1.4;
+    }
+
+    .header-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+        margin-top: 16px;
+    }
+
+    .kv {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        min-height: 72px;
+    }
+
+    .kv .k {
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--muted);
+        letter-spacing: .04em;
+        font-weight: 700;
+        margin-bottom: 6px;
+    }
+
+    .kv .v {
+        font-size: 14px;
+        font-weight: 700;
+        word-break: break-word;
+    }
+
+    .tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 10px;
+    }
+
+    .tab-btn {
+        border: 1px solid var(--border);
+        background: white;
+        border-radius: 999px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font-weight: 700;
+        color: var(--muted);
+    }
+
+    .tab-btn.active {
+        color: var(--primary-dark);
+        background: var(--primary-soft);
+        border-color: #b8c9ff;
+    }
+
+    .tab-panel {
+        display: none;
+    }
+
+    .tab-panel.active {
+        display: block;
+    }
+
+    .empty {
+        padding: 36px;
+        text-align: center;
+        color: var(--muted);
+    }
+
+    .loading {
+        padding: 20px;
+        color: var(--muted);
+        text-align: center;
+    }
+
+    .error {
+        background: #fff1f0;
+        color: #a8071a;
+        border: 1px solid #ffa39e;
+        padding: 12px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+        display: none;
+    }
+
+    @media (max-width: 1000px) {
+        .filters {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .header-grid {
+            grid-template-columns: 1fr 1fr;
+        }
+    }
 </style>
 </head>
 <body>
-
 <div class="page">
 
-  <h1 class="page-title">CS Item Inquiry</h1>
-  <div class="page-sub" id="pageSub">Filter items by type, class, or subsidiary — results update as you go. Click a row to open the item.</div>
-
-  <!-- ============ FILTER BAR + RESULTS GRID ============ -->
-  <div class="card" id="gridSection">
-    <div class="filter-bar">
-      <div class="filter-field grow">
-        <label>Search</label>
-        <input id="fQ" placeholder="Item ID, name, or description…" autocomplete="off">
-      </div>
-      <div class="filter-field">
-        <label>Item Type</label>
-        <select id="fType"><option value="">All</option></select>
-      </div>
-      <div class="filter-field">
-        <label>Class</label>
-        <select id="fClass"><option value="">All</option></select>
-      </div>
-      <div class="filter-field">
-        <label>Subsidiary</label>
-        <select id="fSub"><option value="">All</option></select>
-      </div>
-      <div class="filter-field" style="flex:0;">
-        <label>&nbsp;</label>
-        <button class="btn" id="clearFilters">Clear</button>
-      </div>
-    </div>
-    <div class="filter-meta">
-      <span>Total: <b id="totalCount">0</b></span>
+    <div class="topbar">
+        <div>
+            <h1 class="title">CS Item Inquiry</h1>
+            <div class="subtitle">Search item records and view item header, location inventory, vendors, and bin balances.</div>
+        </div>
     </div>
 
-    <table style="margin-top:14px;">
-      <thead><tr>
-        <th>Item ID</th><th>Display Name</th><th>Description</th><th>Type</th><th>Class</th><th>Subsidiary</th><th>Status</th>
-        <th class="num">On Hand</th><th class="num">Available</th>
-      </tr></thead>
-      <tbody id="gridRows"></tbody>
-    </table>
-  </div>
+    <div id="errorBox" class="error"></div>
 
-  <!-- ============ ITEM DETAIL — columns come entirely from the search ============ -->
-  <div id="detailSection" style="display:none;">
-    <div class="card">
-      <button class="btn link" id="backToGrid">&larr; Back to results</button>
-      <div class="page-sub" style="margin:10px 0 0;">
-        Every column below is whatever the underlying search returns — add or remove a column
-        in the search and this table follows automatically, no page changes needed.
-      </div>
-      <table style="margin-top:14px;">
-        <thead><tr id="detailHeadRow"></tr></thead>
-        <tbody id="detailRows"></tbody>
-      </table>
+    <div id="gridSection" class="card">
+        <div class="filters">
+            <div>
+                <label>Search</label>
+                <input id="fQ" placeholder="Item name, display name, or description">
+            </div>
+
+            <div>
+                <label>Item</label>
+                <select id="fItem">
+                    <option value="">All Items</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Item Type</label>
+                <select id="fType">
+                    <option value="">All Types</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Subsidiary</label>
+                <select id="fSub">
+                    <option value="">All Subsidiaries</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Class</label>
+                <select id="fClass">
+                    <option value="">All Classes</option>
+                </select>
+            </div>
+
+            <div>
+                <label>&nbsp;</label>
+                <button id="clearBtn" class="btn">Clear</button>
+            </div>
+        </div>
+
+        <div class="meta">
+            <span>Total Results: <b id="totalCount">0</b></span>
+            <span>Click any item row to open full inquiry.</span>
+        </div>
+
+        <div class="table-wrap" style="margin-top:14px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Display Name</th>
+                        <th>Description</th>
+                        <th>Type</th>
+                        <th>Class</th>
+                        <th>Subsidiary</th>
+                        <th>Base Price</th>
+                        <th class="num">On Hand</th>
+                        <th class="num">Available</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="gridRows">
+                    <tr>
+                        <td colspan="10" class="loading">Loading items...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </div>
-  </div>
+
+    <div id="detailSection" style="display:none;">
+        <div class="card">
+            <div class="detail-head">
+                <div>
+                    <button id="backBtn" class="btn">&larr; Back to Results</button>
+                    <div id="itemTitle" class="item-title"></div>
+                    <div id="itemDesc" class="item-desc"></div>
+                </div>
+                <div>
+                    <button id="refreshDetailBtn" class="btn btn-primary">Refresh Item</button>
+                </div>
+            </div>
+
+            <div id="headerGrid" class="header-grid"></div>
+        </div>
+
+        <div class="card">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="locationsTab">Locations</button>
+                <button class="tab-btn" data-tab="vendorsTab">Vendors</button>
+                <button class="tab-btn" data-tab="binsTab">Bin Numbers</button>
+            </div>
+
+            <div id="locationsTab" class="tab-panel active">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Location</th>
+                                <th class="num">On Hand</th>
+                                <th class="num">Available</th>
+                                <th class="num">Committed</th>
+                                <th class="num">Committed To Reservation</th>
+                                <th class="num">Back Ordered</th>
+                                <th class="num">In Transit</th>
+                                <th class="num">On Order</th>
+                                <th class="num">Average Cost</th>
+                                <th class="num">Total Value</th>
+                                <th class="num">External In Transit</th>
+                            </tr>
+                        </thead>
+                        <tbody id="locationRows"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="vendorsTab" class="tab-panel">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Preferred Vendor</th>
+                                <th>Vendor</th>
+                                <th>Vendor Code</th>
+                                <th>Vendor Name</th>
+                                <th class="num">Vendor Cost</th>
+                                <th class="num">Vendor Cost Entered</th>
+                                <th>Currency</th>
+                                <th>Return Variance Account</th>
+                                <th>Vendor Schedule</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vendorRows"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="binsTab" class="tab-panel">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Location</th>
+                                <th>Bin Number</th>
+                                <th>Lot / Serial Number</th>
+                                <th>Status</th>
+                                <th class="num">On Hand</th>
+                                <th class="num">Available</th>
+                            </tr>
+                        </thead>
+                        <tbody id="binRows"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
 
 </div>
 
 <script>
-(function(){
-  "use strict";
-  var SUITELET_URL = "__SUITELET_URL__";
-  var MOCK_MODE = (SUITELET_URL.indexOf("__SUITELET_URL__") !== -1 || SUITELET_URL === "");
+(function () {
+    var SUITELET_URL = __SUITELET_URL_JSON__;
+    var currentItemId = '';
 
-  function api(action, params){
-    params = params || {};
-    if (MOCK_MODE) return mockApi(action, params);
-    var q = Object.keys(params).map(function(k){ return encodeURIComponent(k)+'='+encodeURIComponent(params[k]); }).join('&');
-    return fetch(SUITELET_URL + '&action=' + action + (q ? '&'+q : '')).then(function(r){ return r.json(); });
-  }
+    function esc(value) {
+        if (value === null || value === undefined || value === '') {
+            return '';
+        }
 
-  // Mock data so this file can be opened directly in a browser to review
-  // layout before it's deployed as a real Suitelet. Deployed, MOCK_MODE is
-  // false and every call above hits the real NetSuite actions instead.
-  function mockApi(action, params){
-    return new Promise(function(resolve){
-      setTimeout(function(){
-        if (action === 'filterOptions'){
-          resolve({
-            itemTypes:[{value:'InvtPart',text:'Inventory Item'},{value:'LotNumberedInventoryItem',text:'Lot Numbered Inventory Item'}],
-            classes:[{value:'1',text:'Diagnostics'},{value:'2',text:'Reagents'}],
-            subsidiaries:[{value:'1',text:'Main Co.'},{value:'2',text:'Main Co. (CA)'}]
-          });
-        } else if (action === 'itemSearch'){
-          var rows = [
-            {internalId:'9201', itemId:'PL041C', displayName:'Strep-Select Grouping', description:'Choice of 5 latex, controls, extraction reagents, sticks', type:'Lot Numbered Inventory Item', className:'Diagnostics', subsidiary:'Main Co.', status:'Active', onHand:155, available:148},
-            {internalId:'9302', itemId:'HB210', displayName:'HbA1c Kit', description:'A1c testing kit', type:'Inventory Item', className:'Reagents', subsidiary:'Main Co.', status:'Active', onHand:40, available:38}
-          ].filter(function(r){
-            if (params.q && r.itemId.toLowerCase().indexOf(params.q.toLowerCase())===-1 && r.displayName.toLowerCase().indexOf(params.q.toLowerCase())===-1) return false;
-            return true;
-          });
-          resolve({ total: rows.length, rows: rows });
-        } else if (action === 'itemDetail'){
-          // Shape mirrors what the real search returns: a column list (id +
-          // label, as defined by the search) and rows keyed to those ids —
-          // same cross-join sparsity you'll see live (location-only rows have
-          // blank vendor cells and vice versa).
-          var cols = [
-            {key:'c0', label:'Name'}, {key:'c1', label:'Display Name'}, {key:'c2', label:'Description'},
-            {key:'c3', label:'Type'}, {key:'c4', label:'Inventory Warehouse'}, {key:'c5', label:'Warehouse Available'},
-            {key:'c6', label:'Warehouse Average Cost'}, {key:'c15', label:'Preferred Vendor'}, {key:'c16', label:'Vendor Code'}
-          ];
-          var rows = [
-            {c0:'PL041C', c1:'Strep-Select Grouping', c2:'Choice of 5 latex, controls, extraction reagents, sticks', c3:'Inventory Item', c4:'01', c5:148, c6:12.4, c15:'', c16:''},
-            {c0:'PL041C', c1:'Strep-Select Grouping', c2:'Choice of 5 latex, controls, extraction reagents, sticks', c3:'Inventory Item', c4:'', c5:'', c6:'', c15:'Hycor Biomedical', c16:'HYC-PL041'}
-          ];
-          resolve({ columns: cols, rows: rows });
-        } else resolve({});
-      }, 150);
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function num(value) {
+        if (value === null || value === undefined || value === '') {
+            return '';
+        }
+
+        var n = Number(String(value).replace(/,/g, ''));
+
+        if (isNaN(n)) {
+            return esc(value);
+        }
+
+        return n.toLocaleString('en-US', {
+            minimumFractionDigits: n % 1 === 0 ? 0 : 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    function td(value, cls) {
+        return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + (value || '') + '</td>';
+    }
+
+    function emptyRow(colspan, text) {
+        return '<tr><td colspan="' + colspan + '" class="empty">' + esc(text) + '</td></tr>';
+    }
+
+    function showError(message) {
+        var box = document.getElementById('errorBox');
+
+        if (!message) {
+            box.style.display = 'none';
+            box.innerHTML = '';
+            return;
+        }
+
+        box.innerHTML = esc(message);
+        box.style.display = 'block';
+    }
+
+    function api(action, params) {
+        params = params || {};
+
+        var query = [];
+
+        Object.keys(params).forEach(function (key) {
+            if (params[key] !== null && params[key] !== undefined && params[key] !== '') {
+                query.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
+            }
+        });
+
+        var joiner = SUITELET_URL.indexOf('?') === -1 ? '?' : '&';
+        var finalUrl = SUITELET_URL + joiner + 'action=' + encodeURIComponent(action);
+
+        if (query.length) {
+            finalUrl += '&' + query.join('&');
+        }
+
+        return fetch(finalUrl, {
+            credentials: 'same-origin'
+        }).then(function (response) {
+            return response.json();
+        }).then(function (data) {
+            if (data && data.error) {
+                throw new Error(data.error);
+            }
+
+            return data;
+        });
+    }
+
+    function optionHtml(row) {
+        return '<option value="' + esc(row.value) + '">' + esc(row.text) + '</option>';
+    }
+
+    function loadFilterOptions() {
+        api('filterOptions').then(function (data) {
+            document.getElementById('fItem').innerHTML =
+                '<option value="">All Items</option>' + (data.items || []).map(optionHtml).join('');
+
+            document.getElementById('fType').innerHTML =
+                '<option value="">All Types</option>' + (data.itemTypes || []).map(optionHtml).join('');
+
+            document.getElementById('fSub').innerHTML =
+                '<option value="">All Subsidiaries</option>' + (data.subsidiaries || []).map(optionHtml).join('');
+
+            document.getElementById('fClass').innerHTML =
+                '<option value="">All Classes</option>' + (data.classes || []).map(optionHtml).join('');
+
+        }).catch(function (e) {
+            showError(e.message);
+        });
+    }
+
+    function currentFilters() {
+        return {
+            q: document.getElementById('fQ').value.trim(),
+            itemId: document.getElementById('fItem').value,
+            itemType: document.getElementById('fType').value,
+            subsidiaryId: document.getElementById('fSub').value,
+            classId: document.getElementById('fClass').value
+        };
+    }
+
+    function refreshGrid() {
+        showError('');
+
+        document.getElementById('gridRows').innerHTML =
+            '<tr><td colspan="10" class="loading">Loading items...</td></tr>';
+
+        api('itemSearch', currentFilters()).then(function (data) {
+            document.getElementById('totalCount').innerHTML = esc(data.total || 0);
+
+            var rows = data.rows || [];
+
+            if (!rows.length) {
+                document.getElementById('gridRows').innerHTML = emptyRow(10, 'No items found for selected filters.');
+                return;
+            }
+
+            document.getElementById('gridRows').innerHTML = rows.map(function (r) {
+                return '<tr class="clickable" data-item="' + esc(r.internalId) + '">' +
+                    td('<b>' + esc(r.itemId) + '</b>') +
+                    td(esc(r.displayName)) +
+                    td(esc(r.description)) +
+                    td(esc(r.type)) +
+                    td(esc(r.className)) +
+                    td(esc(r.subsidiary)) +
+                    td(num(r.basePrice), 'num') +
+                    td(num(r.onHand), 'num') +
+                    td(num(r.available), 'num') +
+                    td('<span class="badge ' + (r.status === 'Active' ? 'active' : '') + '">' + esc(r.status) + '</span>') +
+                    '</tr>';
+            }).join('');
+
+            var clickableRows = document.querySelectorAll('#gridRows tr[data-item]');
+
+            clickableRows.forEach(function (row) {
+                row.addEventListener('click', function () {
+                    openItem(row.getAttribute('data-item'));
+                });
+            });
+
+        }).catch(function (e) {
+            showError(e.message);
+            document.getElementById('gridRows').innerHTML = emptyRow(10, 'Unable to load item results.');
+        });
+    }
+
+    function openItem(itemId) {
+        if (!itemId) {
+            return;
+        }
+
+        currentItemId = itemId;
+        showError('');
+
+        document.getElementById('gridSection').style.display = 'none';
+        document.getElementById('detailSection').style.display = 'block';
+
+        document.getElementById('itemTitle').innerHTML = 'Loading item...';
+        document.getElementById('itemDesc').innerHTML = '';
+        document.getElementById('headerGrid').innerHTML = '<div class="loading">Loading item header...</div>';
+        document.getElementById('locationRows').innerHTML = emptyRow(11, 'Loading locations...');
+        document.getElementById('vendorRows').innerHTML = emptyRow(9, 'Loading vendors...');
+        document.getElementById('binRows').innerHTML = emptyRow(6, 'Loading bins...');
+
+        api('itemDetail', {
+            itemId: itemId
+        }).then(function (data) {
+            renderItemDetail(data);
+        }).catch(function (e) {
+            showError(e.message);
+            document.getElementById('itemTitle').innerHTML = 'Unable to load item';
+        });
+    }
+
+    function renderItemDetail(data) {
+        var header = data.header || {};
+
+        document.getElementById('itemTitle').innerHTML =
+            esc(header.itemName || '') + ' ' +
+            '<span class="badge ' + (header.status === 'Active' ? 'active' : '') + '">' + esc(header.status || '') + '</span>';
+
+        document.getElementById('itemDesc').innerHTML =
+            '<b>' + esc(header.displayName || '') + '</b>' +
+            (header.description ? '<br>' + esc(header.description) : '');
+
+        var headerFields = [
+            ['Display Name', header.displayName],
+            ['Type', header.type],
+            ['Base Price', num(header.basePrice)],
+            ['Subsidiary', header.subsidiary],
+            ['Class', header.className],
+            ['Costing Method', header.costingMethod],
+            ['Stock Unit', header.stockUnit],
+            ['Purchase Unit', header.purchaseUnit],
+            ['Sale Unit', header.saleUnit],
+            ['Internal ID', header.internalId]
+        ];
+
+        document.getElementById('headerGrid').innerHTML = headerFields.map(function (f) {
+            return '<div class="kv">' +
+                '<div class="k">' + esc(f[0]) + '</div>' +
+                '<div class="v">' + (f[1] || '') + '</div>' +
+                '</div>';
+        }).join('');
+
+        renderLocations(data.locations || []);
+        renderVendors(data.vendors || []);
+        renderBins(data.bins || []);
+    }
+
+    function renderLocations(rows) {
+        if (!rows.length) {
+            document.getElementById('locationRows').innerHTML = emptyRow(11, 'No location inventory found for this item.');
+            return;
+        }
+
+        document.getElementById('locationRows').innerHTML = rows.map(function (r) {
+            return '<tr>' +
+                td(esc(r.location)) +
+                td(num(r.onHand), 'num') +
+                td(num(r.available), 'num') +
+                td(num(r.committed), 'num') +
+                td(num(r.committedToReservation), 'num') +
+                td(num(r.backOrdered), 'num') +
+                td(num(r.inTransit), 'num') +
+                td(num(r.onOrder), 'num') +
+                td(num(r.averageCost), 'num') +
+                td(num(r.totalValue), 'num') +
+                td(num(r.externalInTransit), 'num') +
+                '</tr>';
+        }).join('');
+    }
+
+    function renderVendors(rows) {
+        if (!rows.length) {
+            document.getElementById('vendorRows').innerHTML = emptyRow(9, 'No vendor details found for this item.');
+            return;
+        }
+
+        document.getElementById('vendorRows').innerHTML = rows.map(function (r) {
+            return '<tr>' +
+                td(esc(r.preferredVendor)) +
+                td(esc(r.vendor)) +
+                td(esc(r.vendorCode)) +
+                td(esc(r.vendorName)) +
+                td(num(r.vendorCost), 'num') +
+                td(num(r.vendorCostEntered), 'num') +
+                td(esc(r.currency)) +
+                td(esc(r.returnVarianceAccount)) +
+                td(esc(r.vendorSchedule)) +
+                '</tr>';
+        }).join('');
+    }
+
+    function renderBins(rows) {
+        if (!rows.length) {
+            document.getElementById('binRows').innerHTML = emptyRow(6, 'No bin balance found for this item.');
+            return;
+        }
+
+        document.getElementById('binRows').innerHTML = rows.map(function (r) {
+            return '<tr>' +
+                td(esc(r.location)) +
+                td(esc(r.binNumber)) +
+                td(esc(r.lotSerialNumber)) +
+                td(esc(r.status)) +
+                td(num(r.onHand), 'num') +
+                td(num(r.available), 'num') +
+                '</tr>';
+        }).join('');
+    }
+
+    function clearFilters() {
+        document.getElementById('fQ').value = '';
+        document.getElementById('fItem').value = '';
+        document.getElementById('fType').value = '';
+        document.getElementById('fSub').value = '';
+        document.getElementById('fClass').value = '';
+        refreshGrid();
+    }
+
+    document.getElementById('clearBtn').addEventListener('click', clearFilters);
+
+    document.getElementById('backBtn').addEventListener('click', function () {
+        document.getElementById('detailSection').style.display = 'none';
+        document.getElementById('gridSection').style.display = 'block';
     });
-  }
 
-  function fmtNum(n){ n = Number(n)||0; return n.toLocaleString('en-US', {minimumFractionDigits: n%1?2:0, maximumFractionDigits:2}); }
-  function td(text, cls){ return '<td' + (cls?' class="'+cls+'"':'') + '>' + text + '</td>'; }
-  function numCell(n){ var c = Number(n) < 0 ? 'num' : 'num'; return td(fmtNum(n), c); }
-  function opt(o){ return '<option value="'+o.value+'">'+o.text+'</option>'; }
-
-  // ---------------- Filter dropdowns ----------------
-  function loadFilterOptions(){
-    api('filterOptions').then(function(d){
-      document.getElementById('fType').innerHTML += (d.itemTypes||[]).map(opt).join('');
-      document.getElementById('fClass').innerHTML += (d.classes||[]).map(opt).join('');
-      document.getElementById('fSub').innerHTML += (d.subsidiaries||[]).map(opt).join('');
+    document.getElementById('refreshDetailBtn').addEventListener('click', function () {
+        if (currentItemId) {
+            openItem(currentItemId);
+        }
     });
-  }
 
-  // ---------------- Results grid (real-time) ----------------
-  function currentFilters(){
-    return {
-      q: document.getElementById('fQ').value.trim(),
-      itemType: document.getElementById('fType').value,
-      classId: document.getElementById('fClass').value,
-      subsidiaryId: document.getElementById('fSub').value
-    };
-  }
+    document.getElementById('fItem').addEventListener('change', function () {
+        refreshGrid();
 
-  function refreshGrid(){
-    api('itemSearch', currentFilters()).then(function(d){
-      document.getElementById('totalCount').textContent = d.total || 0;
-      document.getElementById('gridRows').innerHTML = (d.rows||[]).map(function(r){
-        return '<tr class="clickable" data-item="'+r.internalId+'">' +
-          td('<b>'+r.itemId+'</b>') + td(r.displayName||'') + td(r.description||'') + td(r.type||'') +
-          td(r.className||'') + td(r.subsidiary||'') +
-          td('<span class="badge'+(r.status==='Active'?' active':'')+'">'+r.status+'</span>') +
-          numCell(r.onHand) + numCell(r.available) + '</tr>';
-      }).join('') || '<tr><td colspan="9" class="empty">No items match these filters.</td></tr>';
-
-      document.querySelectorAll('#gridRows [data-item]').forEach(function(row){
-        row.addEventListener('click', function(){ openItem(row.dataset.item); });
-      });
+        if (this.value) {
+            openItem(this.value);
+        }
     });
-  }
 
-  var qTimer;
-  document.getElementById('fQ').addEventListener('input', function(){
-    clearTimeout(qTimer);
-    qTimer = setTimeout(refreshGrid, 250);
-  });
-  document.getElementById('fType').addEventListener('change', refreshGrid);
-  document.getElementById('fClass').addEventListener('change', refreshGrid);
-  document.getElementById('fSub').addEventListener('change', refreshGrid);
-  document.getElementById('clearFilters').addEventListener('click', function(){
-    document.getElementById('fQ').value = '';
-    document.getElementById('fType').value = '';
-    document.getElementById('fClass').value = '';
-    document.getElementById('fSub').value = '';
+    document.getElementById('fType').addEventListener('change', refreshGrid);
+    document.getElementById('fSub').addEventListener('change', refreshGrid);
+    document.getElementById('fClass').addEventListener('change', refreshGrid);
+
+    var qTimer;
+    document.getElementById('fQ').addEventListener('input', function () {
+        clearTimeout(qTimer);
+        qTimer = setTimeout(refreshGrid, 300);
+    });
+
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var tabId = btn.getAttribute('data-tab');
+
+            document.querySelectorAll('.tab-btn').forEach(function (b) {
+                b.classList.remove('active');
+            });
+
+            document.querySelectorAll('.tab-panel').forEach(function (p) {
+                p.classList.remove('active');
+            });
+
+            btn.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        });
+    });
+
+    loadFilterOptions();
     refreshGrid();
-  });
 
-  // ---------------- Item detail — fully dynamic, driven by d.columns ----------------
-  function openItem(itemId){
-    api('itemDetail', {itemId:itemId}).then(function(d){
-      var columns = d.columns || [];
-
-      // Header row built from whatever columns the search actually has —
-      // nothing here is hardcoded to a specific field name.
-      document.getElementById('detailHeadRow').innerHTML = columns.map(function(c){
-        return '<th>' + c.label + '</th>';
-      }).join('');
-
-      document.getElementById('detailRows').innerHTML = (d.rows||[]).map(function(r){
-        return '<tr>' + columns.map(function(c){
-          var v = r[c.key];
-          return td(v === null || v === undefined || v === '' ? '<span style="color:var(--muted);">—</span>' : v);
-        }).join('') + '</tr>';
-      }).join('') || '<tr><td colspan="'+(columns.length||1)+'" class="empty">No results for this item.</td></tr>';
-
-      document.getElementById('gridSection').style.display = 'none';
-      document.getElementById('detailSection').style.display = 'block';
-    });
-  }
-
-  document.getElementById('backToGrid').addEventListener('click', function(){
-    document.getElementById('detailSection').style.display = 'none';
-    document.getElementById('gridSection').style.display = 'block';
-  });
-
-  // ---------------- Init ----------------
-  loadFilterOptions();
-  refreshGrid();
 })();
 </script>
 </body>
 </html>`;
     }
 
-    return { onRequest };
-  });
+    return {
+        onRequest: onRequest
+    };
+});
