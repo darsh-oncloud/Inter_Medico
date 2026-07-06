@@ -403,9 +403,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         const dynamicFilters = [];
 
-        // Default page load filter.
-        // This makes only items with on hand quantity show first.
-        dynamicFilters.push(['quantityonhand', 'greaterthan', '0']);
 
         if (params.itemId) {
             dynamicFilters.push(['internalid', 'anyof', params.itemId]);
