@@ -1,22 +1,22 @@
 /**
  * CS Item Inquiry Suitelet
  *
- * For now:
- * - Searches are hardcoded in the script.
- * - Later you can move each search to saved search parameters.
+ * Uses saved searches from deployment parameters.
  *
- * Page includes:
- * - Item filter
- * - Subsidiary filter
- * - Item Type filter
- * - Class filter
- * - Search text filter
- * - Result grid
- * - Item detail page with:
- *   1. Header
- *   2. Locations tab
- *   3. Vendors tab
- *   4. Bin Numbers tab
+ * Parameter IDs:
+ * custscript_img_item_dropdown
+ * custscript_img_subsidiary
+ * custscript_img_category
+ * custscript_img_item_grid
+ * custscript_img_item_header
+ * custscript_img_item_locations
+ * custscript_img_item_vendors
+ * custscript_img_bin_balance
+ *
+ * Important:
+ * - Item Dropdown label uses ONLY the first result column.
+ * - Grid/Header/Locations/Vendors/Bins are dynamic from saved search results.
+ * - Bin Balance search is an ITEM search in your setup, so selected item filter uses internalid.
  *
  * @NApiVersion 2.1
  * @NScriptType Suitelet
@@ -24,10 +24,20 @@
  */
 define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runtime, log) {
 
-    const DEFAULT_ITEM_ID = '9201';
     const MAX_ITEM_OPTIONS = 500;
     const MAX_GRID_ROWS = 300;
     const MAX_DETAIL_ROWS = 1000;
+
+    const PARAMS = {
+        itemDropdown: 'custscript_img_item_dropdown',
+        subsidiary: 'custscript_img_subsidiary',
+        category: 'custscript_img_category',
+        itemGrid: 'custscript_img_item_grid',
+        itemHeader: 'custscript_img_item_header',
+        itemLocations: 'custscript_img_item_locations',
+        itemVendors: 'custscript_img_item_vendors',
+        binBalance: 'custscript_img_bin_balance'
+    };
 
     function onRequest(context) {
         const request = context.request;
@@ -77,19 +87,205 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             name: 'Content-Type',
             value: 'application/json'
         });
+
         response.write(JSON.stringify(obj || {}));
     }
 
-    // Class/Subsidiary/Department text values come back from NetSuite as the
-    // full hierarchy chain, e.g. "Parent Co : Child Co". This keeps only the
-    // last segment (the record's own name), with no dependency on any
-    // account-specific field or join id.
+    function getParam(paramKey) {
+        const scriptObj = runtime.getCurrentScript();
+        const paramId = PARAMS[paramKey];
+
+        if (!paramId) {
+            return '';
+        }
+
+        const value = scriptObj.getParameter({
+            name: paramId
+        });
+
+        return value ? String(value).trim() : '';
+    }
+
+    function loadConfiguredSearch(paramKey) {
+        const searchId = getParam(paramKey);
+
+        if (!searchId) {
+            throw new Error('Missing saved search parameter: ' + PARAMS[paramKey]);
+        }
+
+        return search.load({
+            id: searchId
+        });
+    }
+
     function stripHierarchy(text) {
         if (!text) {
             return text;
         }
+
         const parts = String(text).split(':');
         return parts[parts.length - 1].trim();
+    }
+
+    function safeGetText(result, column) {
+        try {
+            const text = result.getText(column);
+
+            if (text !== null && text !== undefined && text !== '') {
+                return text;
+            }
+        } catch (e) {
+            // Formula/non-list fields may not support getText.
+        }
+
+        return '';
+    }
+
+    function safeGetValue(result, column) {
+        try {
+            const value = result.getValue(column);
+
+            if (value !== null && value !== undefined) {
+                return value;
+            }
+        } catch (e) {
+            // Ignore.
+        }
+
+        return '';
+    }
+
+    function getCellValue(result, column) {
+        const text = safeGetText(result, column);
+
+        if (text !== '') {
+            return stripHierarchy(text);
+        }
+
+        const value = safeGetValue(result, column);
+
+        if (value !== null && value !== undefined) {
+            return value;
+        }
+
+        return '';
+    }
+
+    function getColumnLabel(column, index) {
+        if (column.label) {
+            return column.label;
+        }
+
+        if (column.name) {
+            return column.name;
+        }
+
+        return 'Column ' + (index + 1);
+    }
+
+    function getColumnMeta(columns) {
+        return (columns || []).map(function (column, index) {
+            return {
+                key: 'c' + index,
+                label: getColumnLabel(column, index),
+                name: column.name || '',
+                join: column.join || '',
+                summary: column.summary || ''
+            };
+        });
+    }
+
+    function runDynamicSearch(searchObj, maxRows, includeTotal) {
+        const nsColumns = searchObj.columns || [];
+        const columns = getColumnMeta(nsColumns);
+        const rows = [];
+        let total = 0;
+
+        if (includeTotal) {
+            try {
+                total = searchObj.runPaged().count;
+            } catch (e) {
+                log.error('runPaged count failed', e);
+            }
+        }
+
+        searchObj.run().each(function (result) {
+            const row = {
+                internalId: result.id || '',
+                recordType: result.recordType || ''
+            };
+
+            nsColumns.forEach(function (column, index) {
+                row['c' + index] = getCellValue(result, column);
+            });
+
+            rows.push(row);
+
+            return rows.length < maxRows;
+        });
+
+        return {
+            total: includeTotal ? total : rows.length,
+            columns: columns,
+            rows: rows
+        };
+    }
+
+    function buildAndExpression(expressions) {
+        const clean = (expressions || []).filter(function (expr) {
+            return expr && expr.length;
+        });
+
+        if (!clean.length) {
+            return null;
+        }
+
+        let finalExpression = clean[0];
+
+        for (let i = 1; i < clean.length; i++) {
+            finalExpression = [
+                finalExpression,
+                'AND',
+                clean[i]
+            ];
+        }
+
+        return finalExpression;
+    }
+
+    function addDynamicExpression(searchObj, expression) {
+        if (!expression || !expression.length) {
+            return searchObj;
+        }
+
+        const existing = searchObj.filterExpression || [];
+
+        if (existing && existing.length) {
+            searchObj.filterExpression = [
+                existing,
+                'AND',
+                expression
+            ];
+        } else {
+            searchObj.filterExpression = expression;
+        }
+
+        return searchObj;
+    }
+
+    function safeSection(sectionName, callback) {
+        try {
+            return callback();
+        } catch (e) {
+            log.error(sectionName + ' failed', e);
+
+            return {
+                total: 0,
+                columns: [],
+                rows: [],
+                error: e.message || String(e)
+            };
+        }
     }
 
     // =========================================================
@@ -98,10 +294,10 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
     function getFilterOptions() {
         return {
-            items: getItemOptions(),
+            items: safeSection('Item Dropdown', getItemOptions).rows || [],
             itemTypes: getItemTypeOptions(),
-            classes: getClassOptions(),
-            subsidiaries: getSubsidiaryOptions()
+            classes: safeSection('Class Dropdown', getClassOptions).rows || [],
+            subsidiaries: safeSection('Subsidiary Dropdown', getSubsidiaryOptions).rows || []
         };
     }
 
@@ -123,90 +319,79 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
     function getItemOptions() {
         const rows = [];
+        const itemSearch = loadConfiguredSearch('itemDropdown');
+        const columns = itemSearch.columns || [];
 
-        try {
-            search.create({
-                type: search.Type.ITEM,
-                filters: [
-                    ['isinactive', 'is', 'F']
-                ],
-                columns: [
-                    search.createColumn({ name: 'itemid', sort: search.Sort.ASC }),
-                    'displayname',
-                    'type'
-                ]
-            }).run().each(function (r) {
-                const itemId = r.getValue('itemid') || '';
-                const displayName = r.getValue('displayname') || '';
-                const type = r.getText('type') || '';
+        itemSearch.run().each(function (result) {
+            let label = '';
 
-                rows.push({
-                    value: r.id,
-                    text: itemId + (displayName ? ' - ' + displayName : '') + (type ? ' [' + type + ']' : '')
-                });
+            // Important: item dropdown shows ONLY first result column.
+            // Your first result column should be Name / itemid.
+            if (columns.length) {
+                label = getCellValue(result, columns[0]);
+            }
 
-                return rows.length < MAX_ITEM_OPTIONS;
+            rows.push({
+                value: result.id,
+                text: label || result.id
             });
 
-        } catch (e) {
-            log.error('getItemOptions failed', e);
-        }
+            return rows.length < MAX_ITEM_OPTIONS;
+        });
 
-        return rows;
+        return {
+            rows: rows
+        };
     }
 
     function getClassOptions() {
         const rows = [];
+        const classSearch = loadConfiguredSearch('category');
+        const columns = classSearch.columns || [];
 
-        try {
-            search.create({
-                type: 'classification',
-                filters: [
-                    ['isinactive', 'is', 'F']
-                ],
-                columns: [
-                    search.createColumn({ name: 'name', sort: search.Sort.ASC })
-                ]
-            }).run().each(function (r) {
-                rows.push({
-                    value: r.id,
-                    text: stripHierarchy(r.getValue('name'))
-                });
-                return true;
+        classSearch.run().each(function (result) {
+            let text = '';
+
+            if (columns.length) {
+                text = getCellValue(result, columns[0]);
+            }
+
+            rows.push({
+                value: result.id,
+                text: stripHierarchy(text || result.id)
             });
 
-        } catch (e) {
-            log.error('getClassOptions failed', e);
-        }
+            return true;
+        });
 
-        return rows;
+        return {
+            rows: rows
+        };
     }
 
     function getSubsidiaryOptions() {
         const rows = [];
+        const subsidiarySearch = loadConfiguredSearch('subsidiary');
+        const columns = subsidiarySearch.columns || [];
 
-        try {
-            search.create({
-                type: 'subsidiary',
-                filters: [
-                    ['isinactive', 'is', 'F']
-                ],
-                columns: [
-                    search.createColumn({ name: 'name', sort: search.Sort.ASC })
-                ]
-            }).run().each(function (r) {
-                rows.push({
-                    value: r.id,
-                    text: stripHierarchy(r.getValue('name'))
-                });
-                return true;
+        subsidiarySearch.run().each(function (result) {
+            let text = '';
+
+            if (columns.length) {
+                text = getCellValue(result, columns[0]);
+            }
+
+            rows.push({
+                value: result.id,
+                text: stripHierarchy(text || result.id)
             });
 
-        } catch (e) {
-            log.error('getSubsidiaryOptions failed', e);
-        }
+            return true;
+        });
 
-        return rows;
+        return {
+            rows: rows
+        };
     }
 
     // =========================================================
@@ -214,39 +399,32 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     // =========================================================
 
     function searchItemsFiltered(params) {
-        const filters = [
-            ['isinactive', 'is', 'F']
-        ];
+        const itemSearch = loadConfiguredSearch('itemGrid');
 
-        function addAnd() {
-            if (filters.length) {
-                filters.push('AND');
-            }
-        }
+        const dynamicFilters = [];
+
+        // Default page load filter.
+        // This makes only items with on hand quantity show first.
+        dynamicFilters.push(['quantityonhand', 'greaterthan', '0']);
 
         if (params.itemId) {
-            addAnd();
-            filters.push(['internalid', 'anyof', params.itemId]);
+            dynamicFilters.push(['internalid', 'anyof', params.itemId]);
         }
 
         if (params.itemType) {
-            addAnd();
-            filters.push(['type', 'anyof', params.itemType]);
+            dynamicFilters.push(['type', 'anyof', params.itemType]);
         }
 
         if (params.classId) {
-            addAnd();
-            filters.push(['class', 'anyof', params.classId]);
+            dynamicFilters.push(['class', 'anyof', params.classId]);
         }
 
         if (params.subsidiaryId) {
-            addAnd();
-            filters.push(['subsidiary', 'anyof', params.subsidiaryId]);
+            dynamicFilters.push(['subsidiary', 'anyof', params.subsidiaryId]);
         }
 
         if (params.q) {
-            addAnd();
-            filters.push([
+            dynamicFilters.push([
                 ['nameornumber', 'contains', params.q],
                 'OR',
                 ['displayname', 'contains', params.q],
@@ -255,49 +433,10 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             ]);
         }
 
-        const rows = [];
+        const expression = buildAndExpression(dynamicFilters);
+        addDynamicExpression(itemSearch, expression);
 
-        const itemSearch = search.create({
-            type: search.Type.ITEM,
-            filters: filters,
-            columns: [
-                search.createColumn({ name: 'itemid', sort: search.Sort.ASC }),
-                'displayname',
-                'salesdescription',
-                'type',
-                'class',
-                'subsidiary',
-                'baseprice',
-                'quantityonhand',
-                'quantityavailable',
-                'isinactive'
-            ]
-        });
-
-        const total = itemSearch.runPaged().count;
-
-        itemSearch.run().each(function (r) {
-            rows.push({
-                internalId: r.id,
-                itemId: r.getValue('itemid'),
-                displayName: r.getValue('displayname'),
-                description: r.getValue('salesdescription'),
-                type: r.getText('type'),
-                className: stripHierarchy(r.getText('class')),
-                subsidiary: stripHierarchy(r.getText('subsidiary')),
-                basePrice: r.getValue('baseprice'),
-                onHand: r.getValue('quantityonhand'),
-                available: r.getValue('quantityavailable'),
-                status: r.getValue('isinactive') ? 'Inactive' : 'Active'
-            });
-
-            return rows.length < MAX_GRID_ROWS;
-        });
-
-        return {
-            total: total,
-            rows: rows
-        };
+        return runDynamicSearch(itemSearch, MAX_GRID_ROWS, true);
     }
 
     // =========================================================
@@ -305,210 +444,74 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     // =========================================================
 
     function getItemFullDetail(itemId) {
-        itemId = itemId || DEFAULT_ITEM_ID;
+        if (!itemId) {
+            return {
+                itemId: '',
+                header: { columns: [], rows: [] },
+                locations: { columns: [], rows: [] },
+                vendors: { columns: [], rows: [] },
+                bins: { columns: [], rows: [] }
+            };
+        }
 
         return {
             itemId: itemId,
-            header: getItemHeader(itemId),
-            locations: getItemLocations(itemId),
-            vendors: getItemVendors(itemId),
-            bins: getItemBins(itemId)
+            header: safeSection('Item Header', function () {
+                return getItemHeader(itemId);
+            }),
+            locations: safeSection('Item Locations', function () {
+                return getItemLocations(itemId);
+            }),
+            vendors: safeSection('Item Vendors', function () {
+                return getItemVendors(itemId);
+            }),
+            bins: safeSection('Bin Balance', function () {
+                return getItemBins(itemId);
+            })
         };
     }
 
     function getItemHeader(itemId) {
-        let data = {};
+        const headerSearch = loadConfiguredSearch('itemHeader');
 
-        search.create({
-            type: search.Type.ITEM,
-            filters: [
-                ['internalid', 'anyof', itemId]
-            ],
-            columns: [
-                'itemid',
-                'displayname',
-                'salesdescription',
-                'type',
-                'baseprice',
-                'subsidiary',
-                'class',
-                'costingmethod',
-                'stockunit',
-                'purchaseunit',
-                'saleunit',
-                'isinactive'
-            ]
-        }).run().each(function (r) {
-            data = {
-                internalId: r.id,
-                itemName: r.getValue('itemid'),
-                displayName: r.getValue('displayname'),
-                description: r.getValue('salesdescription'),
-                type: r.getText('type'),
-                basePrice: r.getValue('baseprice'),
-                subsidiary: stripHierarchy(r.getText('subsidiary')),
-                className: stripHierarchy(r.getText('class')),
-                costingMethod: r.getText('costingmethod'),
-                stockUnit: r.getText('stockunit'),
-                purchaseUnit: r.getText('purchaseunit'),
-                saleUnit: r.getText('saleunit'),
-                status: r.getValue('isinactive') ? 'Inactive' : 'Active'
-            };
+        addDynamicExpression(headerSearch, [
+            ['internalid', 'anyof', itemId]
+        ]);
 
-            return false;
-        });
-
-        return data;
+        return runDynamicSearch(headerSearch, 1, false);
     }
 
     function getItemLocations(itemId) {
-        const rows = [];
-        const seen = {};
+        const locationSearch = loadConfiguredSearch('itemLocations');
 
-        try {
-            search.create({
-                type: search.Type.ITEM,
-                filters: [
-                    ['internalid', 'anyof', itemId],
-                    'AND',
-                    ['inventorylocation', 'noneof', '@NONE@']
-                ],
-                columns: [
-                    search.createColumn({ name: 'inventorylocation', sort: search.Sort.ASC }),
-                    'locationquantityonhand',
-                    'locationquantityavailable',
-                    'locationquantitycommitted',
-                    'locationtoresvcommitted',
-                    'locationquantitybackordered',
-                    'locationquantityintransit',
-                    'locationquantityonorder',
-                    'locationaveragecost',
-                    'locationtotalvalue',
-                    'locationqtyintransitext'
-                ]
-            }).run().each(function (r) {
-                const locationId = r.getValue('inventorylocation');
+        addDynamicExpression(locationSearch, [
+            ['internalid', 'anyof', itemId]
+        ]);
 
-                if (!locationId || seen[locationId]) {
-                    return true;
-                }
-
-                seen[locationId] = true;
-
-                rows.push({
-                    location: r.getText('inventorylocation'),
-                    onHand: r.getValue('locationquantityonhand'),
-                    available: r.getValue('locationquantityavailable'),
-                    committed: r.getValue('locationquantitycommitted'),
-                    committedToReservation: r.getValue('locationtoresvcommitted'),
-                    backOrdered: r.getValue('locationquantitybackordered'),
-                    inTransit: r.getValue('locationquantityintransit'),
-                    onOrder: r.getValue('locationquantityonorder'),
-                    averageCost: r.getValue('locationaveragecost'),
-                    totalValue: r.getValue('locationtotalvalue'),
-                    externalInTransit: r.getValue('locationqtyintransitext')
-                });
-
-                return rows.length < MAX_DETAIL_ROWS;
-            });
-
-        } catch (e) {
-            log.error('getItemLocations failed', e);
-        }
-
-        return rows;
+        return runDynamicSearch(locationSearch, MAX_DETAIL_ROWS, false);
     }
 
     function getItemVendors(itemId) {
-        const rows = [];
-        const seen = {};
+        const vendorSearch = loadConfiguredSearch('itemVendors');
 
-        try {
-            search.create({
-                type: search.Type.ITEM,
-                filters: [
-                    ['internalid', 'anyof', itemId]
-                ],
-                columns: [
-                    'vendor',
-                    'vendorcode',
-                    'vendorname',
-                    'vendorcost',
-                    'vendorcostentered',
-                    'vendorpricecurrency',
-                    'vendreturnvarianceaccount',
-                    'vendorschedule',
-                    'othervendor'
-                ]
-            }).run().each(function (r) {
-                const vendorKey =
-                    r.getValue('othervendor') ||
-                    r.getValue('vendor') ||
-                    r.getValue('vendorname');
+        addDynamicExpression(vendorSearch, [
+            ['internalid', 'anyof', itemId]
+        ]);
 
-                if (!vendorKey || seen[vendorKey]) {
-                    return true;
-                }
-
-                seen[vendorKey] = true;
-
-                rows.push({
-                    preferredVendor: r.getText('vendor'),
-                    vendor: r.getText('othervendor'),
-                    vendorCode: r.getValue('vendorcode'),
-                    vendorName: r.getValue('vendorname'),
-                    vendorCost: r.getValue('vendorcost'),
-                    vendorCostEntered: r.getValue('vendorcostentered'),
-                    currency: r.getText('vendorpricecurrency'),
-                    returnVarianceAccount: r.getText('vendreturnvarianceaccount'),
-                    vendorSchedule: r.getText('vendorschedule')
-                });
-
-                return rows.length < MAX_DETAIL_ROWS;
-            });
-
-        } catch (e) {
-            log.error('getItemVendors failed', e);
-        }
-
-        return rows;
+        return runDynamicSearch(vendorSearch, MAX_DETAIL_ROWS, false);
     }
 
     function getItemBins(itemId) {
-        const rows = [];
+        const binSearch = loadConfiguredSearch('binBalance');
 
-        try {
-            search.create({
-                type: 'inventorybalance',
-                filters: [
-                    ['item', 'anyof', itemId]
-                ],
-                columns: [
-                    search.createColumn({ name: 'location', sort: search.Sort.ASC }),
-                    search.createColumn({ name: 'binnumber', sort: search.Sort.ASC }),
-                    'inventorynumber',
-                    'status',
-                    'onhand',
-                    'available'
-                ]
-            }).run().each(function (r) {
-                rows.push({
-                    location: r.getText('location'),
-                    binNumber: r.getText('binnumber'),
-                    lotSerialNumber: r.getText('inventorynumber'),
-                    status: r.getText('status'),
-                    onHand: r.getValue('onhand'),
-                    available: r.getValue('available')
-                });
+        // Your Bin Balance saved search is also an ITEM search.
+        // So we filter selected item by internalid.
+        // Do not use ['item','anyof',itemId] here.
+        addDynamicExpression(binSearch, [
+            ['internalid', 'anyof', itemId]
+        ]);
 
-                return rows.length < MAX_DETAIL_ROWS;
-            });
-
-        } catch (e) {
-            log.error('getItemBins failed', e);
-        }
-
-        return rows;
+        return runDynamicSearch(binSearch, MAX_DETAIL_ROWS, false);
     }
 
     // =========================================================
@@ -537,7 +540,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
     :root {
-        /* Paper + ink: quiet, cool-neutral working surface, not warm cream */
         --paper: #EFF1EC;
         --panel: #FFFFFF;
         --ink: #14171C;
@@ -545,25 +547,21 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         --faint: #8B93A1;
         --line: #DDE1DC;
         --line-soft: #EAEDE9;
-
-        /* Signature accent: "specimen indigo" — a controlled instrument-panel blue,
-           not the generic SaaS #1f5eff */
         --signal: #3D4A8A;
         --signal-dark: #2B3568;
         --signal-soft: #E8EAF5;
-
-        /* Status colors: active/good, and a caution amber used sparingly */
         --good: #146C43;
         --good-soft: #E3F3EA;
         --warn: #96591A;
         --warn-soft: #FBF0DE;
-
         --shadow: 0 1px 2px rgba(20,23,28,.04), 0 8px 20px rgba(20,23,28,.06);
         --radius: 12px;
         --radius-sm: 8px;
     }
 
-    * { box-sizing: border-box; }
+    * {
+        box-sizing: border-box;
+    }
 
     body {
         margin: 0;
@@ -573,9 +571,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         font-size: 14px;
         -webkit-font-smoothing: antialiased;
     }
-
-    .mono { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
-    .display { font-family: 'Space Grotesk', sans-serif; }
 
     .page {
         max-width: 1450px;
@@ -604,7 +599,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     }
 
     .eyebrow .dot {
-        width: 6px; height: 6px; border-radius: 50%;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
         background: var(--good);
         box-shadow: 0 0 0 3px var(--good-soft);
     }
@@ -652,7 +649,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         margin-bottom: 6px;
     }
 
-    input, select {
+    input,
+    select {
         width: 100%;
         height: 38px;
         border: 1px solid var(--line);
@@ -666,9 +664,12 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         transition: border-color .12s ease;
     }
 
-    input::placeholder { color: var(--faint); }
+    input::placeholder {
+        color: var(--faint);
+    }
 
-    input:focus, select:focus {
+    input:focus,
+    select:focus {
         border-color: var(--signal);
         box-shadow: 0 0 0 3px var(--signal-soft);
     }
@@ -713,7 +714,10 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         border-top: 1px dashed var(--line);
     }
 
-    .meta b { color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
+    .meta b {
+        color: var(--ink);
+        font-family: 'IBM Plex Mono', monospace;
+    }
 
     .table-wrap {
         width: 100%;
@@ -748,12 +752,21 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         font-size: 13px;
     }
 
-    tbody tr:nth-child(even) td { background: #FBFBFA; }
+    tbody tr:nth-child(even) td {
+        background: #FBFBFA;
+    }
 
-    tr:last-child td { border-bottom: none; }
+    tr:last-child td {
+        border-bottom: none;
+    }
 
-    tr.clickable { cursor: pointer; }
-    tr.clickable:hover td { background: var(--signal-soft); }
+    tr.clickable {
+        cursor: pointer;
+    }
+
+    tr.clickable:hover td {
+        background: var(--signal-soft);
+    }
 
     .num {
         text-align: right;
@@ -777,7 +790,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         color: var(--good);
     }
 
-    /* ---- Item detail: styled like a specimen / requisition label ---- */
     .detail-head {
         display: flex;
         justify-content: space-between;
@@ -788,7 +800,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     .detail-head::before {
         content: '';
         position: absolute;
-        left: 0; top: 20px; bottom: 20px;
+        left: 0;
+        top: 20px;
+        bottom: 20px;
         width: 4px;
         border-radius: 0 3px 3px 0;
         background: var(--signal);
@@ -804,8 +818,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         align-items: center;
         gap: 10px;
     }
-
-    .item-title .badge { font-size: 11px; vertical-align: 2px; }
 
     .item-desc {
         color: var(--muted);
@@ -846,7 +858,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         color: var(--ink);
     }
 
-    /* Underlined tabs — precise, clinical, not pill-shaped */
     .tabs {
         display: flex;
         gap: 26px;
@@ -872,8 +883,13 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         border-bottom-color: var(--signal);
     }
 
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
+    .tab-panel {
+        display: none;
+    }
+
+    .tab-panel.active {
+        display: block;
+    }
 
     .empty {
         padding: 38px;
@@ -901,9 +917,24 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         font-weight: 500;
     }
 
+    .section-error {
+        background: var(--warn-soft);
+        color: var(--warn);
+        border: 1px solid #EBC994;
+        padding: 12px;
+        border-radius: var(--radius-sm);
+        margin-bottom: 12px;
+        font-size: 13px;
+    }
+
     @media (max-width: 1000px) {
-        .filters { grid-template-columns: 1fr 1fr; }
-        .header-grid { grid-template-columns: 1fr 1fr; }
+        .filters {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .header-grid {
+            grid-template-columns: 1fr 1fr;
+        }
     }
 </style>
 </head>
@@ -949,7 +980,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             </div>
 
             <div>
-                <label>Class</label>
+                <label>Class / Category</label>
                 <select id="fClass">
                     <option value="">All Classes</option>
                 </select>
@@ -963,28 +994,17 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         <div class="meta">
             <span>Total Results: <b id="totalCount">0</b></span>
-            <span>Click any item row to open full inquiry.</span>
+            <span>Default filter: Quantity On Hand &gt; 0</span>
         </div>
 
         <div class="table-wrap" style="margin-top:14px;">
             <table>
                 <thead>
-                    <tr>
-                        <th>Item</th>
-                        <th>Display Name</th>
-                        <th>Description</th>
-                        <th>Type</th>
-                        <th>Class</th>
-                        <th>Subsidiary</th>
-                        <th>Base Price</th>
-                        <th class="num">On Hand</th>
-                        <th class="num">Available</th>
-                        <th>Status</th>
-                    </tr>
+                    <tr id="gridHeadRow"></tr>
                 </thead>
                 <tbody id="gridRows">
                     <tr>
-                        <td colspan="10" class="loading">Loading items...</td>
+                        <td colspan="1" class="loading">Loading items...</td>
                     </tr>
                 </tbody>
             </table>
@@ -1004,6 +1024,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 </div>
             </div>
 
+            <div id="headerError"></div>
             <div id="headerGrid" class="header-grid"></div>
         </div>
 
@@ -1015,22 +1036,11 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             </div>
 
             <div id="locationsTab" class="tab-panel active">
+                <div id="locationError"></div>
                 <div class="table-wrap">
                     <table>
                         <thead>
-                            <tr>
-                                <th>Location</th>
-                                <th class="num">On Hand</th>
-                                <th class="num">Available</th>
-                                <th class="num">Committed</th>
-                                <th class="num">Committed To Reservation</th>
-                                <th class="num">Back Ordered</th>
-                                <th class="num">In Transit</th>
-                                <th class="num">On Order</th>
-                                <th class="num">Average Cost</th>
-                                <th class="num">Total Value</th>
-                                <th class="num">External In Transit</th>
-                            </tr>
+                            <tr id="locationHeadRow"></tr>
                         </thead>
                         <tbody id="locationRows"></tbody>
                     </table>
@@ -1038,20 +1048,11 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             </div>
 
             <div id="vendorsTab" class="tab-panel">
+                <div id="vendorError"></div>
                 <div class="table-wrap">
                     <table>
                         <thead>
-                            <tr>
-                                <th>Preferred Vendor</th>
-                                <th>Vendor</th>
-                                <th>Vendor Code</th>
-                                <th>Vendor Name</th>
-                                <th class="num">Vendor Cost</th>
-                                <th class="num">Vendor Cost Entered</th>
-                                <th>Currency</th>
-                                <th>Return Variance Account</th>
-                                <th>Vendor Schedule</th>
-                            </tr>
+                            <tr id="vendorHeadRow"></tr>
                         </thead>
                         <tbody id="vendorRows"></tbody>
                     </table>
@@ -1059,17 +1060,11 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             </div>
 
             <div id="binsTab" class="tab-panel">
+                <div id="binError"></div>
                 <div class="table-wrap">
                     <table>
                         <thead>
-                            <tr>
-                                <th>Location</th>
-                                <th>Bin Number</th>
-                                <th>Lot / Serial Number</th>
-                                <th>Status</th>
-                                <th class="num">On Hand</th>
-                                <th class="num">Available</th>
-                            </tr>
+                            <tr id="binHeadRow"></tr>
                         </thead>
                         <tbody id="binRows"></tbody>
                     </table>
@@ -1098,9 +1093,49 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             .replace(/'/g, '&#039;');
     }
 
-    function num(value) {
+    function isNumericLabel(label) {
+        label = String(label || '').toLowerCase();
+
+        return (
+            label.indexOf('quantity') !== -1 ||
+            label.indexOf('qty') !== -1 ||
+            label.indexOf('available') !== -1 ||
+            label.indexOf('on hand') !== -1 ||
+            label.indexOf('committed') !== -1 ||
+            label.indexOf('back ordered') !== -1 ||
+            label.indexOf('in transit') !== -1 ||
+            label.indexOf('on order') !== -1 ||
+            label.indexOf('cost') !== -1 ||
+            label.indexOf('price') !== -1 ||
+            label.indexOf('amount') !== -1 ||
+            label.indexOf('value') !== -1 ||
+            label.indexOf('rate') !== -1
+        );
+    }
+
+    function formatValue(value, column) {
         if (value === null || value === undefined || value === '') {
             return '';
+        }
+
+        if (value === true) {
+            return 'Yes';
+        }
+
+        if (value === false) {
+            return 'No';
+        }
+
+        if (String(value) === 'T') {
+            return 'Yes';
+        }
+
+        if (String(value) === 'F') {
+            return 'No';
+        }
+
+        if (!isNumericLabel(column && column.label)) {
+            return esc(value);
         }
 
         var n = Number(String(value).replace(/,/g, ''));
@@ -1134,6 +1169,17 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         box.innerHTML = esc(message);
         box.style.display = 'block';
+    }
+
+    function showSectionError(id, message) {
+        var el = document.getElementById(id);
+
+        if (!message) {
+            el.innerHTML = '';
+            return;
+        }
+
+        el.innerHTML = '<div class="section-error">' + esc(message) + '</div>';
     }
 
     function api(action, params) {
@@ -1200,36 +1246,56 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         };
     }
 
+    function renderHead(headId, columns) {
+        document.getElementById(headId).innerHTML = (columns || []).map(function (column) {
+            var cls = isNumericLabel(column.label) ? ' class="num"' : '';
+            return '<th' + cls + '>' + esc(column.label) + '</th>';
+        }).join('');
+    }
+
+    function renderDynamicRows(bodyId, columns, rows, emptyText, clickable) {
+        var body = document.getElementById(bodyId);
+        columns = columns || [];
+        rows = rows || [];
+
+        if (!columns.length) {
+            body.innerHTML = emptyRow(1, 'No columns found. Please check saved search results.');
+            return;
+        }
+
+        if (!rows.length) {
+            body.innerHTML = emptyRow(columns.length, emptyText);
+            return;
+        }
+
+        body.innerHTML = rows.map(function (row) {
+            var trClass = clickable ? ' class="clickable"' : '';
+            var dataAttr = clickable ? ' data-item="' + esc(row.internalId) + '"' : '';
+
+            return '<tr' + trClass + dataAttr + '>' + columns.map(function (column) {
+                var value = row[column.key];
+                var cls = isNumericLabel(column.label) ? 'num' : '';
+
+                return td(formatValue(value, column), cls);
+            }).join('') + '</tr>';
+        }).join('');
+    }
+
     function refreshGrid() {
         showError('');
 
+        document.getElementById('gridHeadRow').innerHTML = '<th>Loading</th>';
         document.getElementById('gridRows').innerHTML =
-            '<tr><td colspan="10" class="loading">Loading items...</td></tr>';
+            '<tr><td colspan="1" class="loading">Loading items...</td></tr>';
 
         api('itemSearch', currentFilters()).then(function (data) {
-            document.getElementById('totalCount').innerHTML = esc(data.total || 0);
-
+            var columns = data.columns || [];
             var rows = data.rows || [];
 
-            if (!rows.length) {
-                document.getElementById('gridRows').innerHTML = emptyRow(10, 'No items found for selected filters.');
-                return;
-            }
+            document.getElementById('totalCount').innerHTML = esc(data.total || 0);
 
-            document.getElementById('gridRows').innerHTML = rows.map(function (r) {
-                return '<tr class="clickable" data-item="' + esc(r.internalId) + '">' +
-                    td('<b>' + esc(r.itemId) + '</b>') +
-                    td(esc(r.displayName)) +
-                    td(esc(r.description)) +
-                    td(esc(r.type)) +
-                    td(esc(r.className)) +
-                    td(esc(r.subsidiary)) +
-                    td(num(r.basePrice), 'num') +
-                    td(num(r.onHand), 'num') +
-                    td(num(r.available), 'num') +
-                    td('<span class="badge ' + (r.status === 'Active' ? 'active' : '') + '">' + esc(r.status) + '</span>') +
-                    '</tr>';
-            }).join('');
+            renderHead('gridHeadRow', columns);
+            renderDynamicRows('gridRows', columns, rows, 'No items found for selected filters.', true);
 
             var clickableRows = document.querySelectorAll('#gridRows tr[data-item]');
 
@@ -1241,8 +1307,46 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         }).catch(function (e) {
             showError(e.message);
-            document.getElementById('gridRows').innerHTML = emptyRow(10, 'Unable to load item results.');
+            document.getElementById('gridHeadRow').innerHTML = '<th>Error</th>';
+            document.getElementById('gridRows').innerHTML = emptyRow(1, 'Unable to load item results.');
         });
+    }
+
+    function findColumnValue(dataSet, matchList) {
+        var columns = dataSet.columns || [];
+        var row = (dataSet.rows || [])[0] || {};
+
+        for (var i = 0; i < columns.length; i++) {
+            var column = columns[i];
+            var haystack = String((column.name || '') + ' ' + (column.label || '')).toLowerCase();
+
+            for (var j = 0; j < matchList.length; j++) {
+                if (haystack.indexOf(matchList[j].toLowerCase()) !== -1) {
+                    var value = row[column.key];
+
+                    if (value !== null && value !== undefined && value !== '') {
+                        return value;
+                    }
+                }
+            }
+        }
+
+        return '';
+    }
+
+    function firstNonEmptyValue(dataSet) {
+        var columns = dataSet.columns || [];
+        var row = (dataSet.rows || [])[0] || {};
+
+        for (var i = 0; i < columns.length; i++) {
+            var value = row[columns[i].key];
+
+            if (value !== null && value !== undefined && value !== '') {
+                return value;
+            }
+        }
+
+        return '';
     }
 
     function openItem(itemId) {
@@ -1259,9 +1363,20 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         document.getElementById('itemTitle').innerHTML = 'Loading item...';
         document.getElementById('itemDesc').innerHTML = '';
         document.getElementById('headerGrid').innerHTML = '<div class="loading">Loading item header...</div>';
-        document.getElementById('locationRows').innerHTML = emptyRow(11, 'Loading locations...');
-        document.getElementById('vendorRows').innerHTML = emptyRow(9, 'Loading vendors...');
-        document.getElementById('binRows').innerHTML = emptyRow(6, 'Loading bins...');
+
+        showSectionError('headerError', '');
+        showSectionError('locationError', '');
+        showSectionError('vendorError', '');
+        showSectionError('binError', '');
+
+        document.getElementById('locationHeadRow').innerHTML = '<th>Loading</th>';
+        document.getElementById('locationRows').innerHTML = emptyRow(1, 'Loading locations...');
+
+        document.getElementById('vendorHeadRow').innerHTML = '<th>Loading</th>';
+        document.getElementById('vendorRows').innerHTML = emptyRow(1, 'Loading vendors...');
+
+        document.getElementById('binHeadRow').innerHTML = '<th>Loading</th>';
+        document.getElementById('binRows').innerHTML = emptyRow(1, 'Loading bins...');
 
         api('itemDetail', {
             itemId: itemId
@@ -1274,100 +1389,99 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     }
 
     function renderItemDetail(data) {
-        var header = data.header || {};
+        var header = data.header || {
+            columns: [],
+            rows: []
+        };
+
+        var itemName =
+            findColumnValue(header, ['itemid']) ||
+            findColumnValue(header, ['name']) ||
+            firstNonEmptyValue(header) ||
+            'Item Detail';
+
+        var displayName =
+            findColumnValue(header, ['displayname', 'display name']) ||
+            '';
+
+        var description =
+            findColumnValue(header, ['salesdescription', 'description']) ||
+            '';
+
+        var inactiveValue =
+            findColumnValue(header, ['isinactive', 'inactive']) ||
+            '';
+
+        var isInactive =
+            inactiveValue === true ||
+            inactiveValue === 'T' ||
+            String(inactiveValue).toLowerCase() === 'true' ||
+            String(inactiveValue).toLowerCase() === 'yes';
 
         document.getElementById('itemTitle').innerHTML =
-            esc(header.itemName || '') + ' ' +
-            '<span class="badge ' + (header.status === 'Active' ? 'active' : '') + '">' + esc(header.status || '') + '</span>';
+            esc(itemName) +
+            ' <span class="badge ' + (!isInactive ? 'active' : '') + '">' +
+            esc(isInactive ? 'Inactive' : 'Active') +
+            '</span>';
 
         document.getElementById('itemDesc').innerHTML =
-            '<b>' + esc(header.displayName || '') + '</b>' +
-            (header.description ? '<br>' + esc(header.description) : '');
+            (displayName ? '<b>' + esc(displayName) + '</b>' : '') +
+            (description ? '<br>' + esc(description) : '');
 
-        var headerFields = [
-            ['Display Name', header.displayName],
-            ['Type', header.type],
-            ['Base Price', num(header.basePrice)],
-            ['Subsidiary', header.subsidiary],
-            ['Class', header.className],
-            ['Costing Method', header.costingMethod],
-            ['Stock Unit', header.stockUnit],
-            ['Purchase Unit', header.purchaseUnit],
-            ['Sale Unit', header.saleUnit],
-            ['Internal ID', header.internalId]
-        ];
+        showSectionError('headerError', header.error || '');
+        renderHeaderCards(header);
 
-        document.getElementById('headerGrid').innerHTML = headerFields.map(function (f) {
+        var locations = data.locations || {};
+        showSectionError('locationError', locations.error || '');
+        renderHead('locationHeadRow', locations.columns || []);
+        renderDynamicRows(
+            'locationRows',
+            locations.columns || [],
+            locations.rows || [],
+            'No location inventory found for this item.',
+            false
+        );
+
+        var vendors = data.vendors || {};
+        showSectionError('vendorError', vendors.error || '');
+        renderHead('vendorHeadRow', vendors.columns || []);
+        renderDynamicRows(
+            'vendorRows',
+            vendors.columns || [],
+            vendors.rows || [],
+            'No vendor details found for this item.',
+            false
+        );
+
+        var bins = data.bins || {};
+        showSectionError('binError', bins.error || '');
+        renderHead('binHeadRow', bins.columns || []);
+        renderDynamicRows(
+            'binRows',
+            bins.columns || [],
+            bins.rows || [],
+            'No bin balance found for this item.',
+            false
+        );
+    }
+
+    function renderHeaderCards(header) {
+        var columns = header.columns || [];
+        var row = (header.rows || [])[0] || {};
+
+        if (!columns.length) {
+            document.getElementById('headerGrid').innerHTML =
+                '<div class="loading">No item header columns found.</div>';
+            return;
+        }
+
+        document.getElementById('headerGrid').innerHTML = columns.map(function (column) {
+            var value = row[column.key];
+
             return '<div class="kv">' +
-                '<div class="k">' + esc(f[0]) + '</div>' +
-                '<div class="v">' + (f[1] || '') + '</div>' +
+                '<div class="k">' + esc(column.label) + '</div>' +
+                '<div class="v">' + formatValue(value, column) + '</div>' +
                 '</div>';
-        }).join('');
-
-        renderLocations(data.locations || []);
-        renderVendors(data.vendors || []);
-        renderBins(data.bins || []);
-    }
-
-    function renderLocations(rows) {
-        if (!rows.length) {
-            document.getElementById('locationRows').innerHTML = emptyRow(11, 'No location inventory found for this item.');
-            return;
-        }
-
-        document.getElementById('locationRows').innerHTML = rows.map(function (r) {
-            return '<tr>' +
-                td(esc(r.location)) +
-                td(num(r.onHand), 'num') +
-                td(num(r.available), 'num') +
-                td(num(r.committed), 'num') +
-                td(num(r.committedToReservation), 'num') +
-                td(num(r.backOrdered), 'num') +
-                td(num(r.inTransit), 'num') +
-                td(num(r.onOrder), 'num') +
-                td(num(r.averageCost), 'num') +
-                td(num(r.totalValue), 'num') +
-                td(num(r.externalInTransit), 'num') +
-                '</tr>';
-        }).join('');
-    }
-
-    function renderVendors(rows) {
-        if (!rows.length) {
-            document.getElementById('vendorRows').innerHTML = emptyRow(9, 'No vendor details found for this item.');
-            return;
-        }
-
-        document.getElementById('vendorRows').innerHTML = rows.map(function (r) {
-            return '<tr>' +
-                td(esc(r.preferredVendor)) +
-                td(esc(r.vendor)) +
-                td(esc(r.vendorCode)) +
-                td(esc(r.vendorName)) +
-                td(num(r.vendorCost), 'num') +
-                td(num(r.vendorCostEntered), 'num') +
-                td(esc(r.currency)) +
-                td(esc(r.returnVarianceAccount)) +
-                td(esc(r.vendorSchedule)) +
-                '</tr>';
-        }).join('');
-    }
-
-    function renderBins(rows) {
-        if (!rows.length) {
-            document.getElementById('binRows').innerHTML = emptyRow(6, 'No bin balance found for this item.');
-            return;
-        }
-
-        document.getElementById('binRows').innerHTML = rows.map(function (r) {
-            return '<tr>' +
-                td(esc(r.location)) +
-                td(esc(r.binNumber)) +
-                td(esc(r.lotSerialNumber)) +
-                td(esc(r.status)) +
-                td(num(r.onHand), 'num') +
-                td(num(r.available), 'num') +
-                '</tr>';
         }).join('');
     }
 
@@ -1406,6 +1520,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     document.getElementById('fClass').addEventListener('change', refreshGrid);
 
     var qTimer;
+
     document.getElementById('fQ').addEventListener('input', function () {
         clearTimeout(qTimer);
         qTimer = setTimeout(refreshGrid, 300);
