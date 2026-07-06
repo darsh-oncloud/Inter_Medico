@@ -158,129 +158,105 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'],
     }
 
     // -----------------------------------------------------------------------
-    // Item detail — header + Locations / Vendors / Bin Numbers, record-style
+    // Item detail — fully driven by the search's OWN column list.
+    //
+    // HOW THIS WORKS
+    // We don't hand-list columns in the render code. We load a search (right
+    // now built inline from the exact script you pasted — see
+    // buildInlineDetailSearch below — later just a saved search loaded by id)
+    // and read its .columns straight off the search object. Whatever
+    // labels/columns that search has is what gets sent to the page and
+    // rendered as table headers. Add a column to the search later and it
+    // shows up automatically — this file does not need to change.
+    //
+    // SWITCHING TO A REAL SAVED SEARCH
+    // 1. In NetSuite, build/adjust the search the way you want it (Lists >
+    //    Search > Saved Searches > New, type = Item), save it, note its id
+    //    (e.g. "customsearch1783350611743").
+    // 2. Set DETAIL_SEARCH_ID below to that id. That's the only code change,
+    //    ever, needed for adding/removing/relabeling columns from then on.
     // -----------------------------------------------------------------------
+    const DETAIL_SEARCH_ID = null; // e.g. 'customsearch1783350611743' once saved
+
+    function loadDetailSearch() {
+      return DETAIL_SEARCH_ID
+        ? search.load({ id: DETAIL_SEARCH_ID })
+        : buildInlineDetailSearch();
+    }
+
+    // Exactly the search you pasted, minus the hardcoded item filter (that's
+    // applied per-request below instead). This is the "for now hardcoded"
+    // stand-in until you save the real search and set DETAIL_SEARCH_ID above.
+    function buildInlineDetailSearch() {
+      return search.create({
+        type: 'item',
+        columns: [
+          search.createColumn({ name: 'itemid', label: 'Name' }),
+          search.createColumn({ name: 'displayname', label: 'Display Name' }),
+          search.createColumn({ name: 'salesdescription', label: 'Description' }),
+          search.createColumn({ name: 'type', label: 'Type' }),
+          search.createColumn({ name: 'inventorylocation', label: 'Inventory Warehouse' }),
+          search.createColumn({ name: 'locationquantityavailable', label: 'Warehouse Available' }),
+          search.createColumn({ name: 'locationaveragecost', label: 'Warehouse Average Cost' }),
+          search.createColumn({ name: 'locationquantitybackordered', label: 'Warehouse Back Ordered' }),
+          search.createColumn({ name: 'locationquantitycommitted', label: 'Warehouse Committed' }),
+          search.createColumn({ name: 'locationtoresvcommitted', label: 'Warehouse Committed To Reservation' }),
+          search.createColumn({ name: 'locationquantityintransit', label: 'Warehouse In Transit' }),
+          search.createColumn({ name: 'locationquantityonhand', label: 'Warehouse On Hand' }),
+          search.createColumn({ name: 'locationquantityonorder', label: 'Warehouse On Order' }),
+          search.createColumn({ name: 'locationtotalvalue', label: 'Warehouse Total Value' }),
+          search.createColumn({ name: 'locationqtyintransitext', label: 'Warehouse External Quantity In Transit' }),
+          search.createColumn({ name: 'vendor', label: 'Preferred Vendor' }),
+          search.createColumn({ name: 'vendorcode', label: 'Vendor Code' }),
+          search.createColumn({ name: 'vendorname', label: 'Vendor Name' }),
+          search.createColumn({ name: 'vendorcost', label: 'Vendor Price' }),
+          search.createColumn({ name: 'vendorcostentered', label: 'Vendor Price (Entered)' }),
+          search.createColumn({ name: 'vendorpricecurrency', label: 'Vendor Price Currency' }),
+          search.createColumn({ name: 'vendreturnvarianceaccount', label: 'Vendor Return Variance Account' }),
+          search.createColumn({ name: 'vendorschedule', label: 'Vendor Schedule' }),
+          search.createColumn({ name: 'othervendor', label: 'Vendor' })
+        ]
+      });
+    }
+
+    // Runs the detail search filtered to one item, and returns both the
+    // column definitions (id + label, straight off the search) and the rows
+    // (cell values keyed to those same ids) — the page just renders whatever
+    // comes back, it never assumes specific column names.
+    //
+    // NOTE ON BLANK "Inventory Warehouse" cells: this search mixes location
+    // columns, vendor columns, and (per your screenshot) bin/quality-status
+    // columns in one item search. NetSuite returns the cross-product of those
+    // joins, so a row only has non-blank warehouse numbers when it's the
+    // specific location combination — vendor-only or bin-only rows show
+    // blank warehouse fields, and vice versa. That's expected NetSuite
+    // behavior for a search built this way, not a loading bug. A clean
+    // one-row-per-location result needs a search with only location columns
+    // (no vendor/bin joins mixed in).
     function getItemFullDetail(itemId) {
       // TEST HARDCODE: falls back to your sample item (9201) when nothing is
-      // selected yet, so this page has something to show the first time you
-      // open it. Remove this fallback once the grid is the normal entry point.
+      // selected yet. Once wired to the grid, a real itemId is always passed.
       itemId = itemId || '9201';
 
-      return {
-        header: getItemHeader(itemId),
-        locations: getItemLocations(itemId),
-        vendors: getItemVendors(itemId),
-        bins: getItemBins(itemId)
-      };
-    }
+      const s = loadDetailSearch();
+      s.filters = [search.createFilter({ name: 'internalid', operator: search.Operator.ANYOF, values: [itemId] })];
 
-    // Header fields — search.lookupFields works against the generic ITEM
-    // search type regardless of the item's actual sub-type, so this avoids
-    // having to guess/hardcode a record type (the old code's biggest VERIFY).
-    function getItemHeader(itemId) {
-      const fields = search.lookupFields({
-        type: search.Type.ITEM,
-        id: itemId,
-        columns: ['itemid', 'displayname', 'salesdescription', 'type', 'class', 'subsidiary', 'isinactive']
-      });
-      return {
-        internalId: itemId,
-        itemId: fields.itemid,
-        displayName: fields.displayname,
-        description: fields.salesdescription,
-        type: fields.type && fields.type[0] ? fields.type[0].text : '',
-        className: fields['class'] && fields['class'][0] ? fields['class'][0].text : '',
-        subsidiary: fields.subsidiary && fields.subsidiary[0] ? fields.subsidiary[0].text : '',
-        status: fields.isinactive ? 'Inactive' : 'Active'
-      };
-    }
+      const columns = s.columns.map((c, i) => ({
+        key: 'c' + i,
+        label: c.label || (c.name + (c.join ? ' (' + c.join + ')' : ''))
+      }));
 
-    // Locations tab — mirrors the item record's Locations subtab
-    function getItemLocations(itemId) {
-      const s = search.create({
-        type: search.Type.ITEM,
-        filters: [['internalid', 'anyof', itemId]],
-        columns: [
-          'inventorylocation',
-          'locationquantityonhand',
-          'locationquantityavailable',
-          'locationquantitycommitted',
-          'locationquantitybackordered',
-          'locationquantityonorder',
-          'locationaveragecost',
-          'locationtotalvalue'
-        ]
-      });
       const rows = [];
       s.run().each((r) => {
-        rows.push({
-          location: r.getText('inventorylocation') || r.getValue('inventorylocation'),
-          onHand: Number(r.getValue('locationquantityonhand')) || 0,
-          available: Number(r.getValue('locationquantityavailable')) || 0,
-          committed: Number(r.getValue('locationquantitycommitted')) || 0,
-          backordered: Number(r.getValue('locationquantitybackordered')) || 0,
-          onOrder: Number(r.getValue('locationquantityonorder')) || 0,
-          avgCost: Number(r.getValue('locationaveragecost')) || 0,
-          totalValue: Number(r.getValue('locationtotalvalue')) || 0
+        const row = {};
+        s.columns.forEach((c, i) => {
+          row['c' + i] = r.getText(c) || r.getValue(c);
         });
+        rows.push(row);
         return true;
       });
-      return rows;
-    }
 
-    // Vendors tab — mirrors the item record's Vendors subtab
-    function getItemVendors(itemId) {
-      const s = search.create({
-        type: search.Type.ITEM,
-        filters: [['internalid', 'anyof', itemId]],
-        columns: [
-          'vendor', 'vendorcode', 'vendorname', 'vendorcost',
-          'vendorcostentered', 'vendorpricecurrency', 'othervendor'
-        ]
-      });
-      const rows = [];
-      s.run().each((r) => {
-        const preferred = r.getValue('vendor');
-        rows.push({
-          vendor: r.getText('vendor') || r.getText('othervendor') || r.getValue('vendorname'),
-          vendorCode: r.getValue('vendorcode'),
-          cost: Number(r.getValue('vendorcost')) || Number(r.getValue('vendorcostentered')) || 0,
-          currency: r.getText('vendorpricecurrency') || r.getValue('vendorpricecurrency'),
-          preferred: !!preferred
-        });
-        return true;
-      });
-      return rows;
-    }
-
-    // Bin Numbers tab — mirrors the item record's Bin Numbers subtab.
-    // VERIFY: only meaningful if Bin Management is enabled in this account;
-    // field ids here (binnumber / binonhand) are best-guess — confirm against
-    // a live item that actually has bins before relying on this tab.
-    function getItemBins(itemId) {
-      try {
-        const s = search.create({
-          type: search.Type.ITEM,
-          filters: [['internalid', 'anyof', itemId]],
-          columns: ['binnumber', 'inventorylocation', 'binonhand']
-        });
-        const rows = [];
-        s.run().each((r) => {
-          const bin = r.getValue('binnumber');
-          if (bin) {
-            rows.push({
-              bin: r.getText('binnumber') || bin,
-              location: r.getText('inventorylocation') || r.getValue('inventorylocation'),
-              onHand: Number(r.getValue('binonhand')) || 0
-            });
-          }
-          return true;
-        });
-        return rows;
-      } catch (e) {
-        log.debug('getItemBins', 'Bin columns not available in this account: ' + e.message);
-        return [];
-      }
+      return { columns, rows };
     }
 
     // -----------------------------------------------------------------------
@@ -349,17 +325,10 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'],
   .badge{ font-size:11px; padding:3px 8px; border-radius:999px; font-weight:600; background:#EEF3F2; color:var(--muted); }
   .badge.active{ background:var(--teal-tint); color:var(--teal-dark); }
 
-  /* Item detail — record style: header block + subtabs */
-  .record-header{ display:grid; grid-template-columns:2fr 1fr 1fr 1fr; gap:24px; }
+  /* Item detail — one dynamic table, columns driven by the search itself */
   .kv-row{ display:flex; flex-direction:column; gap:3px; padding:4px 0; }
   .kv-row .k{ font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
   .kv-row .v{ font-weight:600; font-size:14px; }
-
-  .subtabs{ display:flex; gap:4px; border-bottom:1px solid var(--line); margin:20px 0 14px; }
-  .subtab{ padding:9px 4px; margin-right:20px; font-size:13.5px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; }
-  .subtab.active{ color:var(--teal-dark); border-bottom-color:var(--teal); }
-  .subtabview{ display:none; }
-  .subtabview.active{ display:block; }
 </style>
 </head>
 <body>
@@ -406,47 +375,18 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'],
     </table>
   </div>
 
-  <!-- ============ ITEM DETAIL (record-style) ============ -->
+  <!-- ============ ITEM DETAIL — columns come entirely from the search ============ -->
   <div id="detailSection" style="display:none;">
     <div class="card">
       <button class="btn link" id="backToGrid">&larr; Back to results</button>
-      <div class="record-header" style="margin-top:14px;">
-        <div class="kv-row"><span class="k">Item</span><span class="v" id="dItemId">—</span></div>
-        <div class="kv-row"><span class="k">Type</span><span class="v" id="dType">—</span></div>
-        <div class="kv-row"><span class="k">Class</span><span class="v" id="dClass">—</span></div>
-        <div class="kv-row"><span class="k">Status</span><span class="v" id="dStatus">—</span></div>
-        <div class="kv-row" style="grid-column:1 / -1;"><span class="k">Display Name</span><span class="v" id="dDisplayName">—</span></div>
-        <div class="kv-row" style="grid-column:1 / -1;"><span class="k">Description</span><span class="v" id="dDesc">—</span></div>
-        <div class="kv-row"><span class="k">Subsidiary</span><span class="v" id="dSub">—</span></div>
+      <div class="page-sub" style="margin:10px 0 0;">
+        Every column below is whatever the underlying search returns — add or remove a column
+        in the search and this table follows automatically, no page changes needed.
       </div>
-
-      <div class="subtabs">
-        <div class="subtab active" data-subtab="locations">Locations</div>
-        <div class="subtab" data-subtab="vendors">Vendors</div>
-        <div class="subtab" data-subtab="bins">Bin Numbers</div>
-      </div>
-
-      <div class="subtabview active" data-subtabview="locations">
-        <table>
-          <thead><tr>
-            <th>Location</th><th class="num">On Hand</th><th class="num">Available</th><th class="num">Committed</th>
-            <th class="num">Back Ordered</th><th class="num">On Order</th><th class="num">Avg. Cost</th><th class="num">Total Value</th>
-          </tr></thead>
-          <tbody id="locRows"></tbody>
-        </table>
-      </div>
-      <div class="subtabview" data-subtabview="vendors">
-        <table>
-          <thead><tr><th>Vendor</th><th>Vendor Code</th><th class="num">Cost</th><th>Currency</th><th>Preferred</th></tr></thead>
-          <tbody id="vendRows"></tbody>
-        </table>
-      </div>
-      <div class="subtabview" data-subtabview="bins">
-        <table>
-          <thead><tr><th>Bin</th><th>Location</th><th class="num">On Hand</th></tr></thead>
-          <tbody id="binRows"></tbody>
-        </table>
-      </div>
+      <table style="margin-top:14px;">
+        <thead><tr id="detailHeadRow"></tr></thead>
+        <tbody id="detailRows"></tbody>
+      </table>
     </div>
   </div>
 
@@ -487,12 +427,20 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'],
           });
           resolve({ total: rows.length, rows: rows });
         } else if (action === 'itemDetail'){
-          resolve({
-            header:{internalId: params.itemId||'9201', itemId:'PL041C', displayName:'Strep-Select Grouping', description:'Choice of 5 latex, controls, extraction reagents, sticks', type:'Lot Numbered Inventory Item', className:'Diagnostics', subsidiary:'Main Co.', status:'Active'},
-            locations:[{location:'01', onHand:155, available:148, committed:1, backordered:-6, onOrder:70, avgCost:12.4, totalValue:1922}],
-            vendors:[{vendor:'Hycor Biomedical', vendorCode:'HYC-PL041', cost:212.5, currency:'USD', preferred:true}],
-            bins:[{bin:'A-12', location:'01', onHand:90},{bin:'A-13', location:'01', onHand:65}]
-          });
+          // Shape mirrors what the real search returns: a column list (id +
+          // label, as defined by the search) and rows keyed to those ids —
+          // same cross-join sparsity you'll see live (location-only rows have
+          // blank vendor cells and vice versa).
+          var cols = [
+            {key:'c0', label:'Name'}, {key:'c1', label:'Display Name'}, {key:'c2', label:'Description'},
+            {key:'c3', label:'Type'}, {key:'c4', label:'Inventory Warehouse'}, {key:'c5', label:'Warehouse Available'},
+            {key:'c6', label:'Warehouse Average Cost'}, {key:'c15', label:'Preferred Vendor'}, {key:'c16', label:'Vendor Code'}
+          ];
+          var rows = [
+            {c0:'PL041C', c1:'Strep-Select Grouping', c2:'Choice of 5 latex, controls, extraction reagents, sticks', c3:'Inventory Item', c4:'01', c5:148, c6:12.4, c15:'', c16:''},
+            {c0:'PL041C', c1:'Strep-Select Grouping', c2:'Choice of 5 latex, controls, extraction reagents, sticks', c3:'Inventory Item', c4:'', c5:'', c6:'', c15:'Hycor Biomedical', c16:'HYC-PL041'}
+          ];
+          resolve({ columns: cols, rows: rows });
         } else resolve({});
       }, 150);
     });
@@ -555,31 +503,23 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'],
     refreshGrid();
   });
 
-  // ---------------- Item detail ----------------
+  // ---------------- Item detail — fully dynamic, driven by d.columns ----------------
   function openItem(itemId){
     api('itemDetail', {itemId:itemId}).then(function(d){
-      var h = d.header || {};
-      document.getElementById('dItemId').textContent = h.itemId || '—';
-      document.getElementById('dDisplayName').textContent = h.displayName || '—';
-      document.getElementById('dDesc').textContent = h.description || '—';
-      document.getElementById('dType').textContent = h.type || '—';
-      document.getElementById('dClass').textContent = h.className || '—';
-      document.getElementById('dSub').textContent = h.subsidiary || '—';
-      document.getElementById('dStatus').textContent = h.status || '—';
+      var columns = d.columns || [];
 
-      document.getElementById('locRows').innerHTML = (d.locations||[]).map(function(r){
-        return '<tr>' + td('<b>'+r.location+'</b>') + numCell(r.onHand) + numCell(r.available) + numCell(r.committed) +
-          numCell(r.backordered) + numCell(r.onOrder) + numCell(r.avgCost) + numCell(r.totalValue) + '</tr>';
-      }).join('') || '<tr><td colspan="8" class="empty">No location data.</td></tr>';
+      // Header row built from whatever columns the search actually has —
+      // nothing here is hardcoded to a specific field name.
+      document.getElementById('detailHeadRow').innerHTML = columns.map(function(c){
+        return '<th>' + c.label + '</th>';
+      }).join('');
 
-      document.getElementById('vendRows').innerHTML = (d.vendors||[]).map(function(r){
-        return '<tr>' + td('<b>'+r.vendor+'</b>') + td(r.vendorCode||'') + numCell(r.cost) + td(r.currency||'') +
-          td(r.preferred ? '<span class="badge active">Preferred</span>' : '<span class="badge">Alternate</span>') + '</tr>';
-      }).join('') || '<tr><td colspan="5" class="empty">No vendors on file.</td></tr>';
-
-      document.getElementById('binRows').innerHTML = (d.bins||[]).map(function(r){
-        return '<tr>' + td('<b>'+r.bin+'</b>') + td(r.location||'') + numCell(r.onHand) + '</tr>';
-      }).join('') || '<tr><td colspan="3" class="empty">No bin data (bin management may be off, or item has none).</td></tr>';
+      document.getElementById('detailRows').innerHTML = (d.rows||[]).map(function(r){
+        return '<tr>' + columns.map(function(c){
+          var v = r[c.key];
+          return td(v === null || v === undefined || v === '' ? '<span style="color:var(--muted);">—</span>' : v);
+        }).join('') + '</tr>';
+      }).join('') || '<tr><td colspan="'+(columns.length||1)+'" class="empty">No results for this item.</td></tr>';
 
       document.getElementById('gridSection').style.display = 'none';
       document.getElementById('detailSection').style.display = 'block';
@@ -589,15 +529,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'],
   document.getElementById('backToGrid').addEventListener('click', function(){
     document.getElementById('detailSection').style.display = 'none';
     document.getElementById('gridSection').style.display = 'block';
-  });
-
-  document.querySelectorAll('.subtab').forEach(function(t){
-    t.addEventListener('click', function(){
-      document.querySelectorAll('.subtab').forEach(function(x){ x.classList.toggle('active', x===t); });
-      document.querySelectorAll('.subtabview').forEach(function(v){
-        v.classList.toggle('active', v.dataset.subtabview === t.dataset.subtab);
-      });
-    });
   });
 
   // ---------------- Init ----------------
