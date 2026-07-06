@@ -80,6 +80,18 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         response.write(JSON.stringify(obj || {}));
     }
 
+    // Class/Subsidiary/Department text values come back from NetSuite as the
+    // full hierarchy chain, e.g. "Parent Co : Child Co". This keeps only the
+    // last segment (the record's own name), with no dependency on any
+    // account-specific field or join id.
+    function stripHierarchy(text) {
+        if (!text) {
+            return text;
+        }
+        const parts = String(text).split(':');
+        return parts[parts.length - 1].trim();
+    }
+
     // =========================================================
     // FILTER OPTIONS
     // =========================================================
@@ -158,7 +170,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             }).run().each(function (r) {
                 rows.push({
                     value: r.id,
-                    text: r.getValue('name')
+                    text: stripHierarchy(r.getValue('name'))
                 });
                 return true;
             });
@@ -185,7 +197,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             }).run().each(function (r) {
                 rows.push({
                     value: r.id,
-                    text: r.getValue('name')
+                    text: stripHierarchy(r.getValue('name'))
                 });
                 return true;
             });
@@ -235,7 +247,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         if (params.q) {
             addAnd();
             filters.push([
-                ['itemid', 'contains', params.q],
+                ['nameornumber', 'contains', params.q],
                 'OR',
                 ['displayname', 'contains', params.q],
                 'OR',
@@ -271,8 +283,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 displayName: r.getValue('displayname'),
                 description: r.getValue('salesdescription'),
                 type: r.getText('type'),
-                className: r.getText('class'),
-                subsidiary: r.getText('subsidiary'),
+                className: stripHierarchy(r.getText('class')),
+                subsidiary: stripHierarchy(r.getText('subsidiary')),
                 basePrice: r.getValue('baseprice'),
                 onHand: r.getValue('quantityonhand'),
                 available: r.getValue('quantityavailable'),
@@ -334,8 +346,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 description: r.getValue('salesdescription'),
                 type: r.getText('type'),
                 basePrice: r.getValue('baseprice'),
-                subsidiary: r.getText('subsidiary'),
-                className: r.getText('class'),
+                subsidiary: stripHierarchy(r.getText('subsidiary')),
+                className: stripHierarchy(r.getText('class')),
                 costingMethod: r.getText('costingmethod'),
                 stockUnit: r.getText('stockunit'),
                 purchaseUnit: r.getText('purchaseunit'),
