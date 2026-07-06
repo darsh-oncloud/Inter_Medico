@@ -37,7 +37,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         itemLocations: 'custscript_img_item_locations',
         itemVendors: 'custscript_img_item_vendors',
         binBalance: 'custscript_img_bin_balance',
-        inventoryNumbers: 'custscript_img_inventory_numbers'
+        inventoryNumbers: 'custscript_img_invetory_numbers'
     };
 
     function onRequest(context) {
