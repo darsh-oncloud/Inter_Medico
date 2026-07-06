@@ -235,7 +235,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         if (params.q) {
             addAnd();
             filters.push([
-                ['nameornumber', 'contains', params.q],
+                ['itemid', 'contains', params.q],
                 'OR',
                 ['displayname', 'contains', params.q],
                 'OR',
