@@ -469,7 +469,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 vendors: { columns: [], rows: [] },
                 bins: { columns: [], rows: [] },
                 inventoryNumbers: { columns: [], rows: [] },
-                transactions: { columns: [], rows: [] }
+                transactions: { columns: [], rows: [] },
+                committedSalesOrders: { columns: [], rows: [] }
             };
         }
 
@@ -492,6 +493,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             }),
             transactions: safeSection('Related Transactions', function () {
                 return getItemTransactions(itemId);
+            }),
+            committedSalesOrders: safeSection('Committed Sales Orders', function () {
+                return getCommittedSalesOrders(itemId);
             })
         };
     }
@@ -552,6 +556,18 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         addDynamicExpression(transactionSearch, [
             ['item', 'anyof', itemId]
         ]);
+
+        return runDynamicSearch(transactionSearch, MAX_DETAIL_ROWS, false);
+    }
+
+    function getCommittedSalesOrders(itemId) {
+        const transactionSearch = loadConfiguredSearch('transactions');
+
+        addDynamicExpression(transactionSearch, buildAndExpression([
+            ['item', 'anyof', itemId],
+            ['type', 'anyof', 'SalesOrd'],
+            ['quantitycommitted', 'greaterthan', '0']
+        ]));
 
         return runDynamicSearch(transactionSearch, MAX_DETAIL_ROWS, false);
     }
@@ -1074,6 +1090,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 <button class="tab-btn" data-tab="binsTab">Bin Numbers</button>
                 <button class="tab-btn" data-tab="inventoryNumbersTab">Inventory Numbers</button>
                 <button class="tab-btn" data-tab="transactionsTab">Related Transactions</button>
+                <button class="tab-btn" data-tab="committedSalesOrdersTab">Committed SO Lines</button>
             </div>
 
             <div id="locationsTab" class="tab-panel active">
@@ -1132,6 +1149,18 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                             <tr id="transactionHeadRow"></tr>
                         </thead>
                         <tbody id="transactionRows"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="committedSalesOrdersTab" class="tab-panel">
+                <div id="committedSalesOrderError"></div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr id="committedSalesOrderHeadRow"></tr>
+                        </thead>
+                        <tbody id="committedSalesOrderRows"></tbody>
                     </table>
                 </div>
             </div>
@@ -1435,6 +1464,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         showSectionError('binError', '');
         showSectionError('inventoryNumberError', '');
         showSectionError('transactionError', '');
+        showSectionError('committedSalesOrderError', '');
 
         document.getElementById('locationHeadRow').innerHTML = '<th>Loading</th>';
         document.getElementById('locationRows').innerHTML = emptyRow(1, 'Loading locations...');
@@ -1450,6 +1480,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         document.getElementById('transactionHeadRow').innerHTML = '<th>Loading</th>';
         document.getElementById('transactionRows').innerHTML = emptyRow(1, 'Loading related transactions...');
+
+        document.getElementById('committedSalesOrderHeadRow').innerHTML = '<th>Loading</th>';
+        document.getElementById('committedSalesOrderRows').innerHTML = emptyRow(1, 'Loading committed sales order lines...');
 
         api('itemDetail', {
             itemId: itemId
@@ -1556,6 +1589,17 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             transactions.columns || [],
             transactions.rows || [],
             'No related transactions found for this item.',
+            false
+        );
+
+        var committedSalesOrders = data.committedSalesOrders || {};
+        showSectionError('committedSalesOrderError', committedSalesOrders.error || '');
+        renderHead('committedSalesOrderHeadRow', committedSalesOrders.columns || []);
+        renderDynamicRows(
+            'committedSalesOrderRows',
+            committedSalesOrders.columns || [],
+            committedSalesOrders.rows || [],
+            'No committed sales order lines found for this item.',
             false
         );
     }
