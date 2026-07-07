@@ -69,7 +69,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             });
 
         } catch (e) {
-            log.error('CS Item Inquiry Error', {
+            log.error('Item Lookup Desk Error', {
                 action: action,
                 message: e.message,
                 stack: e.stack
@@ -573,7 +573,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 <html>
 <head>
 <meta charset="utf-8">
-<title>CS Item Inquiry</title>
+<title>Item Lookup Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -983,7 +983,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     <div class="topbar">
         <div>
             <div class="eyebrow"><span class="dot"></span>Item &amp; Inventory Records</div>
-            <h1 class="title">CS Item Inquiry</h1>
+            <h1 class="title">Item Lookup Desk</h1>
             <div class="subtitle">Search item records and view item header, location inventory, vendors, and bin balances.</div>
         </div>
     </div>
