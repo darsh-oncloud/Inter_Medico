@@ -12,7 +12,7 @@
  * custscript_img_item_locations
  * custscript_img_item_vendors
  * custscript_img_bin_balance
- * custscript_img_inventory_numbers
+ * custscript_img_invetory_numbers
  * custscript_img_transaction
  *
  * @NApiVersion 2.1
@@ -34,7 +34,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         itemLocations: 'custscript_img_item_locations',
         itemVendors: 'custscript_img_item_vendors',
         binBalance: 'custscript_img_bin_balance',
-        inventoryNumbers: 'custscript_img_inventory_numbers',
+        inventoryNumbers: 'custscript_img_invetory_numbers',
         transactions: 'custscript_img_transaction'
     };
 
