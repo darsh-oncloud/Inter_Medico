@@ -12,11 +12,8 @@
  * custscript_img_item_locations
  * custscript_img_item_vendors
  * custscript_img_bin_balance
- *
- * Important:
- * - Item Dropdown label uses ONLY the first result column.
- * - Grid/Header/Locations/Vendors/Bins are dynamic from saved search results.
- * - Bin Balance search is an ITEM search in your setup, so selected item filter uses internalid.
+ * custscript_img_inventory_numbers
+ * custscript_img_transaction
  *
  * @NApiVersion 2.1
  * @NScriptType Suitelet
@@ -37,7 +34,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         itemLocations: 'custscript_img_item_locations',
         itemVendors: 'custscript_img_item_vendors',
         binBalance: 'custscript_img_bin_balance',
-        inventoryNumbers: 'custscript_img_invetory_numbers'
+        inventoryNumbers: 'custscript_img_inventory_numbers',
+        transactions: 'custscript_img_transaction'
     };
 
     function onRequest(context) {
@@ -289,12 +287,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         }
     }
 
-    // Finds a column whose name/label matches one of the given terms (e.g.
-    // "on hand", "quantityonhand") and sorts dataSet.rows by it, descending,
-    // numeric-aware. Works regardless of which cN key that column landed on,
-    // since column position depends entirely on how the saved search is built.
-    // NOTE: this only reorders the rows this request already pulled back — see
-    // the caveat in searchItemsFiltered about MAX_GRID_ROWS truncation.
     function sortRowsByColumnDesc(dataSet, matchTerms) {
         const columns = dataSet.columns || [];
         let targetKey = null;
@@ -321,15 +313,11 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         dataSet.rows.sort(function (a, b) {
             const av = Number(String(a[targetKey] || 0).replace(/,/g, '')) || 0;
             const bv = Number(String(b[targetKey] || 0).replace(/,/g, '')) || 0;
-            return bv - av; // descending: highest quantity first
+            return bv - av;
         });
 
         return dataSet;
     }
-
-    // =========================================================
-    // FILTER OPTIONS
-    // =========================================================
 
     function getFilterOptions() {
         return {
@@ -364,8 +352,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         itemSearch.run().each(function (result) {
             let label = '';
 
-            // Important: item dropdown shows ONLY first result column.
-            // Your first result column should be Name / itemid.
             if (columns.length) {
                 label = getCellValue(result, columns[0]);
             }
@@ -433,15 +419,10 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         };
     }
 
-    // =========================================================
-    // MAIN ITEM GRID SEARCH
-    // =========================================================
-
     function searchItemsFiltered(params) {
         const itemSearch = loadConfiguredSearch('itemGrid');
 
         const dynamicFilters = [];
-
 
         if (params.itemId) {
             dynamicFilters.push(['internalid', 'anyof', params.itemId]);
@@ -474,23 +455,10 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         const result = runDynamicSearch(itemSearch, MAX_GRID_ROWS, true);
 
-        // Highest On Hand quantity first. IMPORTANT: this sorts only the rows
-        // already returned (capped at MAX_GRID_ROWS = 300). If the saved
-        // search itself pulls back items in an unrelated order, the true
-        // top-300-by-quantity items may not all be in that first batch.
-        // For a fully correct result, also set a descending sort on the
-        // Quantity On Hand column inside the saved search itself (Lists >
-        // Search > Saved Searches > your item grid search > Results tab) —
-        // that way NetSuite hands back rows already in the right order and
-        // this sort just re-confirms it.
         sortRowsByColumnDesc(result, ['on hand', 'onhand', 'quantityonhand']);
 
         return result;
     }
-
-    // =========================================================
-    // ITEM DETAIL
-    // =========================================================
 
     function getItemFullDetail(itemId) {
         if (!itemId) {
@@ -500,7 +468,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 locations: { columns: [], rows: [] },
                 vendors: { columns: [], rows: [] },
                 bins: { columns: [], rows: [] },
-                inventoryNumbers: { columns: [], rows: [] }
+                inventoryNumbers: { columns: [], rows: [] },
+                transactions: { columns: [], rows: [] }
             };
         }
 
@@ -520,6 +489,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             }),
             inventoryNumbers: safeSection('Inventory Numbers', function () {
                 return getInventoryNumbers(itemId);
+            }),
+            transactions: safeSection('Related Transactions', function () {
+                return getItemTransactions(itemId);
             })
         };
     }
@@ -557,9 +529,6 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     function getItemBins(itemId) {
         const binSearch = loadConfiguredSearch('binBalance');
 
-        // Your Bin Balance saved search is also an ITEM search.
-        // So we filter selected item by internalid.
-        // Do not use ['item','anyof',itemId] here.
         addDynamicExpression(binSearch, [
             ['internalid', 'anyof', itemId]
         ]);
@@ -568,20 +537,24 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     }
 
     function getInventoryNumbers(itemId) {
-      const invNumSearch = loadConfiguredSearch('inventoryNumbers');
+        const invNumSearch = loadConfiguredSearch('inventoryNumbers');
 
-      // For Inventory Number search, item filter should be "item".
-      // If your saved search is Item type by mistake, this will show section error only.
-      addDynamicExpression(invNumSearch, [
-          ['internalid', 'anyof', itemId]
-      ]);
+        addDynamicExpression(invNumSearch, [
+            ['internalid', 'anyof', itemId]
+        ]);
 
-      return runDynamicSearch(invNumSearch, MAX_DETAIL_ROWS, false);
+        return runDynamicSearch(invNumSearch, MAX_DETAIL_ROWS, false);
     }
 
-    // =========================================================
-    // PAGE
-    // =========================================================
+    function getItemTransactions(itemId) {
+        const transactionSearch = loadConfiguredSearch('transactions');
+
+        addDynamicExpression(transactionSearch, [
+            ['item', 'anyof', itemId]
+        ]);
+
+        return runDynamicSearch(transactionSearch, MAX_DETAIL_ROWS, false);
+    }
 
     function renderPage() {
         const scriptObj = runtime.getCurrentScript();
@@ -928,6 +901,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         gap: 26px;
         margin-bottom: 16px;
         border-bottom: 1px solid var(--line);
+        flex-wrap: wrap;
     }
 
     .tab-btn {
@@ -1059,7 +1033,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         <div class="meta">
             <span>Total Results: <b id="totalCount">0</b></span>
-            <span>Default filter: Quantity On Hand &gt; 0</span>
+            <span>Sorted by highest Quantity On Hand first</span>
         </div>
 
         <div class="table-wrap" style="margin-top:14px;">
@@ -1099,6 +1073,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 <button class="tab-btn" data-tab="vendorsTab">Vendors</button>
                 <button class="tab-btn" data-tab="binsTab">Bin Numbers</button>
                 <button class="tab-btn" data-tab="inventoryNumbersTab">Inventory Numbers</button>
+                <button class="tab-btn" data-tab="transactionsTab">Related Transactions</button>
             </div>
 
             <div id="locationsTab" class="tab-panel active">
@@ -1137,20 +1112,33 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                 </div>
             </div>
 
-          <div id="inventoryNumbersTab" class="tab-panel">
-              <div id="inventoryNumberError"></div>
-              <div class="table-wrap">
-                  <table>
-                      <thead>
-                          <tr id="inventoryNumberHeadRow"></tr>
-                     </thead>
-                    <tbody id="inventoryNumberRows"></tbody>
-                </table>
-             </div>
-          </div>   
+            <div id="inventoryNumbersTab" class="tab-panel">
+                <div id="inventoryNumberError"></div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr id="inventoryNumberHeadRow"></tr>
+                        </thead>
+                        <tbody id="inventoryNumberRows"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="transactionsTab" class="tab-panel">
+                <div id="transactionError"></div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr id="transactionHeadRow"></tr>
+                        </thead>
+                        <tbody id="transactionRows"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
-     </div>
-  </div>
+    </div>
+
+</div>
 
 <script>
 (function () {
@@ -1446,6 +1434,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         showSectionError('vendorError', '');
         showSectionError('binError', '');
         showSectionError('inventoryNumberError', '');
+        showSectionError('transactionError', '');
 
         document.getElementById('locationHeadRow').innerHTML = '<th>Loading</th>';
         document.getElementById('locationRows').innerHTML = emptyRow(1, 'Loading locations...');
@@ -1458,6 +1447,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         document.getElementById('inventoryNumberHeadRow').innerHTML = '<th>Loading</th>';
         document.getElementById('inventoryNumberRows').innerHTML = emptyRow(1, 'Loading inventory numbers...');
+
+        document.getElementById('transactionHeadRow').innerHTML = '<th>Loading</th>';
+        document.getElementById('transactionRows').innerHTML = emptyRow(1, 'Loading related transactions...');
 
         api('itemDetail', {
             itemId: itemId
@@ -1549,11 +1541,22 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         showSectionError('inventoryNumberError', inventoryNumbers.error || '');
         renderHead('inventoryNumberHeadRow', inventoryNumbers.columns || []);
         renderDynamicRows(
-           'inventoryNumberRows',
-           inventoryNumbers.columns || [],
-           inventoryNumbers.rows || [],
-           'No inventory numbers found for this item.',
-           false
+            'inventoryNumberRows',
+            inventoryNumbers.columns || [],
+            inventoryNumbers.rows || [],
+            'No inventory numbers found for this item.',
+            false
+        );
+
+        var transactions = data.transactions || {};
+        showSectionError('transactionError', transactions.error || '');
+        renderHead('transactionHeadRow', transactions.columns || []);
+        renderDynamicRows(
+            'transactionRows',
+            transactions.columns || [],
+            transactions.rows || [],
+            'No related transactions found for this item.',
+            false
         );
     }
 
