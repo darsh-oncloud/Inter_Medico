@@ -7,16 +7,16 @@
  * no hardcoded record logic beyond wiring the per-customer filter.
  *
  * Parameter IDs:
- * custscript_cp_customer_dropdown
- * custscript_cp_sales_rep
- * custscript_cp_subsidiary
- * custscript_cp_customer_grid
- * custscript_cp_customer_header
- * custscript_cp_open_orders
- * custscript_cp_order_history
- * custscript_cp_open_balance
- * custscript_cp_in_transit_shipments
- * custscript_cp_in_transit_transfers
+ * custscript_customer_dropdown
+ * custscript_sales_rep
+ * custscript_subsidiary_dropdown
+ * custscript_customer_grid
+ * custscript_customer_header
+ * custscript_open_orders
+ * custscript_order_history
+ * custscript_open_balance
+ * custscript_in_transit_shipments
+ * custscript_in_transit_transfers
  *
  * @NApiVersion 2.1
  * @NScriptType Suitelet
@@ -29,16 +29,16 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     const MAX_DETAIL_ROWS = 1000;
 
     const PARAMS = {
-        customerDropdown: 'custscript_cp_customer_dropdown',
-        salesRep: 'custscript_cp_sales_rep',
-        subsidiary: 'custscript_cp_subsidiary',
-        customerGrid: 'custscript_cp_customer_grid',
-        customerHeader: 'custscript_cp_customer_header',
-        openOrders: 'custscript_cp_open_orders',
-        orderHistory: 'custscript_cp_order_history',
-        openBalance: 'custscript_cp_open_balance',
-        inTransitShipments: 'custscript_cp_in_transit_shipments',
-        inTransitTransfers: 'custscript_cp_in_transit_transfers'
+        customerDropdown: 'custscript_customer_dropdown',
+        salesRep: 'custscript_sales_rep',
+        subsidiary: 'custscript_subsidiary_dropdown',
+        customerGrid: 'custscript_customer_grid',
+        customerHeader: 'custscript_customer_header',
+        openOrders: 'custscript_open_orders',
+        orderHistory: 'custscript_order_history',
+        openBalance: 'custscript_open_balance',
+        inTransitShipments: 'custscript_in_transit_shipments',
+        inTransitTransfers: 'custscript_in_transit_transfers'
     };
 
     // Every detail tab is the same recipe: load the configured saved search,
