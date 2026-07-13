@@ -38,20 +38,17 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         transactions: 'custscript_img_transaction'
     };
 
-    // Transaction record types whose "entity" field represents a Customer.
-    // Used to decide when to build a clickable Customer link for a transaction row.
+    // Transaction record types whose "entity" field is a Customer vs a Vendor.
+    // Used to decide what the entity/"Name" column should link to.
     const CUSTOMER_TRANSACTION_TYPES = [
-        'salesorder',
-        'invoice',
-        'cashsale',
-        'creditmemo',
-        'customerpayment',
-        'customerdeposit',
-        'estimate',
-        'cashrefund',
-        'returnauthorization',
-        'itemfulfillment',
-        'opportunity'
+        'salesorder', 'invoice', 'cashsale', 'creditmemo', 'customerpayment',
+        'customerdeposit', 'estimate', 'cashrefund', 'returnauthorization',
+        'itemfulfillment', 'opportunity'
+    ];
+
+    const VENDOR_TRANSACTION_TYPES = [
+        'purchaseorder', 'vendorbill', 'vendorcredit', 'vendorpayment',
+        'itemreceipt', 'vendorreturnauthorization'
     ];
 
     function onRequest(context) {
@@ -269,10 +266,16 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             // directly using its own internal id + record type.
             row.viewUrl = buildRecordUrl(row.recordType, row.internalId);
 
-            // If this row is a customer-facing transaction and we captured an entity id,
-            // build a direct link to that Customer record too.
-            if (row.entityId && CUSTOMER_TRANSACTION_TYPES.indexOf(String(row.recordType).toLowerCase()) !== -1) {
-                row.customerUrl = buildRecordUrl('customer', row.entityId);
+            // If we captured an entity id, link it to Customer or Vendor depending
+            // on which kind of transaction this is.
+            if (row.entityId) {
+                const tranType = String(row.recordType).toLowerCase();
+
+                if (CUSTOMER_TRANSACTION_TYPES.indexOf(tranType) !== -1) {
+                    row.entityUrl = buildRecordUrl('customer', row.entityId);
+                } else if (VENDOR_TRANSACTION_TYPES.indexOf(tranType) !== -1) {
+                    row.entityUrl = buildRecordUrl('vendor', row.entityId);
+                }
             }
 
             rows.push(row);
@@ -687,431 +690,61 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-    :root {
-        --paper: #EFF1EC;
-        --panel: #FFFFFF;
-        --ink: #14171C;
-        --muted: #667085;
-        --faint: #8B93A1;
-        --line: #DDE1DC;
-        --line-soft: #EAEDE9;
-        --signal: #3D4A8A;
-        --signal-dark: #2B3568;
-        --signal-soft: #E8EAF5;
-        --good: #146C43;
-        --good-soft: #E3F3EA;
-        --warn: #96591A;
-        --warn-soft: #FBF0DE;
-        --shadow: 0 1px 2px rgba(20,23,28,.04), 0 8px 20px rgba(20,23,28,.06);
-        --radius: 12px;
-        --radius-sm: 8px;
-    }
-
-    * {
-        box-sizing: border-box;
-    }
-
-    body {
-        margin: 0;
-        background: var(--paper);
-        color: var(--ink);
-        font-family: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
-        font-size: 14px;
-        -webkit-font-smoothing: antialiased;
-    }
-
-    .page {
-        max-width: 1450px;
-        margin: 0 auto;
-        padding: 32px 28px 60px;
-    }
-
-    .topbar {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: 22px;
-    }
-
-    .eyebrow {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 11px;
-        letter-spacing: .09em;
-        text-transform: uppercase;
-        color: var(--signal);
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-    }
-
-    .eyebrow .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: var(--good);
-        box-shadow: 0 0 0 3px var(--good-soft);
-    }
-
-    .title {
-        font-family: 'Space Grotesk', sans-serif;
-        font-size: 27px;
-        font-weight: 700;
-        margin: 0;
-        letter-spacing: -.01em;
-    }
-
-    .subtitle {
-        color: var(--muted);
-        margin-top: 6px;
-        font-size: 13px;
-        max-width: 620px;
-        line-height: 1.5;
-    }
-
-    .card {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: var(--radius);
-        box-shadow: var(--shadow);
-        padding: 20px;
-        margin-bottom: 18px;
-        position: relative;
-    }
-
-    .filters {
-        display: grid;
-        grid-template-columns: 2fr 1.3fr 1fr 1fr 1fr auto;
-        gap: 12px;
-        align-items: end;
-    }
-
-    label {
-        display: block;
-        font-size: 10.5px;
-        text-transform: uppercase;
-        color: var(--faint);
-        letter-spacing: .07em;
-        font-weight: 700;
-        margin-bottom: 6px;
-    }
-
-    input,
-    select {
-        width: 100%;
-        height: 38px;
-        border: 1px solid var(--line);
-        border-radius: var(--radius-sm);
-        padding: 8px 11px;
-        background: var(--panel);
-        color: var(--ink);
-        outline: none;
-        font-family: 'Inter', sans-serif;
-        font-size: 13.5px;
-        transition: border-color .12s ease;
-    }
-
-    input::placeholder {
-        color: var(--faint);
-    }
-
-    input:focus,
-    select:focus {
-        border-color: var(--signal);
-        box-shadow: 0 0 0 3px var(--signal-soft);
-    }
-
-    .btn {
-        height: 38px;
-        border: 1px solid var(--line);
-        background: var(--panel);
-        border-radius: var(--radius-sm);
-        padding: 0 15px;
-        cursor: pointer;
-        font-weight: 600;
-        font-size: 13px;
-        color: var(--ink);
-        transition: border-color .12s ease, color .12s ease;
-    }
-
-    .btn:hover {
-        border-color: var(--signal);
-        color: var(--signal-dark);
-    }
-
-    .btn:disabled {
-        opacity: .45;
-        cursor: not-allowed;
-    }
-
-    .btn:disabled:hover {
-        border-color: var(--line);
-        color: var(--ink);
-    }
-
-    .btn-primary {
-        background: var(--signal);
-        border-color: var(--signal);
-        color: #fff;
-    }
-
-    .btn-primary:hover {
-        background: var(--signal-dark);
-        border-color: var(--signal-dark);
-        color: #fff;
-    }
-
-    .btn-row {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-    }
-
-    .meta {
-        display: flex;
-        justify-content: space-between;
-        color: var(--muted);
-        font-size: 12px;
-        margin-top: 14px;
-        padding-top: 12px;
-        border-top: 1px dashed var(--line);
-    }
-
-    .meta b {
-        color: var(--ink);
-        font-family: 'IBM Plex Mono', monospace;
-    }
-
-    .table-wrap {
-        width: 100%;
-        overflow: auto;
-        border: 1px solid var(--line);
-        border-radius: var(--radius-sm);
-    }
-
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        min-width: 900px;
-    }
-
-    th {
-        background: #F7F8F5;
-        color: var(--muted);
-        text-align: left;
-        font-size: 10.5px;
-        text-transform: uppercase;
-        letter-spacing: .06em;
-        font-weight: 700;
-        padding: 11px 12px;
-        border-bottom: 1px solid var(--line);
-        white-space: nowrap;
-    }
-
-    td {
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--line-soft);
-        vertical-align: top;
-        font-size: 13px;
-    }
-
-    tbody tr:nth-child(even) td {
-        background: #FBFBFA;
-    }
-
-    tr:last-child td {
-        border-bottom: none;
-    }
-
-    tr.clickable {
-        cursor: pointer;
-    }
-
-    tr.clickable:hover td {
-        background: var(--signal-soft);
-    }
-
-    .num {
-        text-align: right;
-        font-family: 'IBM Plex Mono', monospace;
-        font-variant-numeric: tabular-nums;
-    }
-
-    .badge {
-        display: inline-block;
-        padding: 3px 10px;
-        border-radius: 999px;
-        background: var(--line-soft);
-        color: var(--muted);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: .02em;
-    }
-
-    .badge.active {
-        background: var(--good-soft);
-        color: var(--good);
-    }
-
-    .row-link {
-        color: var(--signal-dark);
-        text-decoration: underline;
-        text-decoration-color: var(--signal);
-        text-underline-offset: 2px;
-    }
-
-    .row-link:hover {
-        color: var(--signal);
-    }
-
-    .detail-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
-    }
-
-    .detail-head::before {
-        content: '';
-        position: absolute;
-        left: 0;
-        top: 20px;
-        bottom: 20px;
-        width: 4px;
-        border-radius: 0 3px 3px 0;
-        background: var(--signal);
-    }
-
-    .item-title {
-        font-family: 'Space Grotesk', sans-serif;
-        font-size: 25px;
-        font-weight: 700;
-        margin: 10px 0 6px;
-        letter-spacing: -.01em;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .item-desc {
-        color: var(--muted);
-        max-width: 850px;
-        line-height: 1.5;
-        font-size: 13.5px;
-    }
-
-    .header-grid {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 12px;
-        margin-top: 18px;
-    }
-
-    .kv {
-        background: #F8F9F6;
-        border: 1px solid var(--line);
-        border-radius: var(--radius-sm);
-        padding: 12px 13px;
-        min-height: 72px;
-    }
-
-    .kv .k {
-        font-size: 10.5px;
-        text-transform: uppercase;
-        color: var(--faint);
-        letter-spacing: .06em;
-        font-weight: 700;
-        margin-bottom: 7px;
-    }
-
-    .kv .v {
-        font-family: 'IBM Plex Mono', monospace;
-        font-size: 13.5px;
-        font-weight: 600;
-        word-break: break-word;
-        color: var(--ink);
-    }
-
-    .tabs {
-        display: flex;
-        gap: 26px;
-        margin-bottom: 16px;
-        border-bottom: 1px solid var(--line);
-        flex-wrap: wrap;
-    }
-
-    .tab-btn {
-        border: none;
-        background: none;
-        padding: 10px 2px;
-        cursor: pointer;
-        font-weight: 600;
-        font-size: 13.5px;
-        color: var(--muted);
-        border-bottom: 2px solid transparent;
-        margin-bottom: -1px;
-        font-family: 'Inter', sans-serif;
-    }
-
-    .tab-btn.active {
-        color: var(--signal-dark);
-        border-bottom-color: var(--signal);
-    }
-
-    .tab-panel {
-        display: none;
-    }
-
-    .tab-panel.active {
-        display: block;
-    }
-
-    .empty {
-        padding: 38px;
-        text-align: center;
-        color: var(--faint);
-        font-size: 13px;
-    }
-
-    .loading {
-        padding: 22px;
-        color: var(--muted);
-        text-align: center;
-        font-size: 13px;
-    }
-
-    .error {
-        background: var(--warn-soft);
-        color: var(--warn);
-        border: 1px solid #EBC994;
-        padding: 12px 14px;
-        border-radius: var(--radius-sm);
-        margin-bottom: 14px;
-        display: none;
-        font-size: 13px;
-        font-weight: 500;
-    }
-
-    .section-error {
-        background: var(--warn-soft);
-        color: var(--warn);
-        border: 1px solid #EBC994;
-        padding: 12px;
-        border-radius: var(--radius-sm);
-        margin-bottom: 12px;
-        font-size: 13px;
-    }
-
-    @media (max-width: 1000px) {
-        .filters {
-            grid-template-columns: 1fr 1fr;
-        }
-
-        .header-grid {
-            grid-template-columns: 1fr 1fr;
-        }
-    }
+:root{ --paper: #EFF1EC; --panel: #FFFFFF; --ink: #14171C; --muted: #667085; --faint: #8B93A1; --line: #DDE1DC; --line-soft: #EAEDE9; --signal: #3D4A8A; --signal-dark: #2B3568; --signal-soft: #E8EAF5; --good: #146C43; --good-soft: #E3F3EA; --warn: #96591A; --warn-soft: #FBF0DE; --shadow: 0 1px 2px rgba(20,23,28,.04), 0 8px 20px rgba(20,23,28,.06); --radius: 12px; --radius-sm: 8px; }
+*{ box-sizing: border-box; }
+body{ margin: 0; background: var(--paper); color: var(--ink); font-family: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }
+.page{ max-width: 1450px; margin: 0 auto; padding: 32px 28px 60px; }
+.topbar{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 22px; }
+.eyebrow{ font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--signal); font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.eyebrow .dot{ width: 6px; height: 6px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
+.title{ font-family: 'Space Grotesk', sans-serif; font-size: 27px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+.subtitle{ color: var(--muted); margin-top: 6px; font-size: 13px; max-width: 620px; line-height: 1.5; }
+.card{ background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; margin-bottom: 18px; position: relative; }
+.filters{ display: grid; grid-template-columns: 2fr 1.3fr 1fr 1fr 1fr auto; gap: 12px; align-items: end; }
+label{ display: block; font-size: 10.5px; text-transform: uppercase; color: var(--faint); letter-spacing: .07em; font-weight: 700; margin-bottom: 6px; }
+input, select{ width: 100%; height: 38px; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 11px; background: var(--panel); color: var(--ink); outline: none; font-family: 'Inter', sans-serif; font-size: 13.5px; transition: border-color .12s ease; }
+input::placeholder{ color: var(--faint); }
+input:focus, select:focus{ border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.btn{ height: 38px; border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius-sm); padding: 0 15px; cursor: pointer; font-weight: 600; font-size: 13px; color: var(--ink); transition: border-color .12s ease, color .12s ease; }
+.btn:hover{ border-color: var(--signal); color: var(--signal-dark); }
+.btn:disabled{ opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover{ border-color: var(--line); color: var(--ink); }
+.btn-primary{ background: var(--signal); border-color: var(--signal); color: #fff; }
+.btn-primary:hover{ background: var(--signal-dark); border-color: var(--signal-dark); color: #fff; }
+.btn-row{ display: flex; gap: 10px; align-items: center; }
+.meta{ display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.meta b{ color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
+.table-wrap{ width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+table{ width: 100%; border-collapse: collapse; min-width: 900px; }
+th{ background: #F7F8F5; color: var(--muted); text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; padding: 11px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td{ padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; font-size: 13px; }
+tbody tr:nth-child(even) td{ background: #FBFBFA; }
+tr:last-child td{ border-bottom: none; }
+tr.clickable{ cursor: pointer; }
+tr.clickable:hover td{ background: var(--signal-soft); }
+.num{ text-align: right; font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+.badge{ display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--line-soft); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.badge.active{ background: var(--good-soft); color: var(--good); }
+.row-link{ color: var(--signal-dark); text-decoration: underline; text-decoration-color: var(--signal); text-underline-offset: 2px; }
+.row-link:hover{ color: var(--signal); }
+.detail-head{ display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.detail-head::before{ content: ''; position: absolute; left: 0; top: 20px; bottom: 20px; width: 4px; border-radius: 0 3px 3px 0; background: var(--signal); }
+.item-title{ font-family: 'Space Grotesk', sans-serif; font-size: 25px; font-weight: 700; margin: 10px 0 6px; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+.item-desc{ color: var(--muted); max-width: 850px; line-height: 1.5; font-size: 13.5px; }
+.header-grid{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 18px; }
+.kv{ background: #F8F9F6; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 13px; min-height: 72px; }
+.kv .k{ font-size: 10.5px; text-transform: uppercase; color: var(--faint); letter-spacing: .06em; font-weight: 700; margin-bottom: 7px; }
+.kv .v{ font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; font-weight: 600; word-break: break-word; color: var(--ink); }
+.tabs{ display: flex; gap: 26px; margin-bottom: 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tab-btn{ border: none; background: none; padding: 10px 2px; cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-family: 'Inter', sans-serif; }
+.tab-btn.active{ color: var(--signal-dark); border-bottom-color: var(--signal); }
+.tab-panel{ display: none; }
+.tab-panel.active{ display: block; }
+.empty{ padding: 38px; text-align: center; color: var(--faint); font-size: 13px; }
+.loading{ padding: 22px; color: var(--muted); text-align: center; font-size: 13px; }
+.error{ background: var(--warn-soft); color: var(--warn); border: 1px solid #EBC994; padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 14px; display: none; font-size: 13px; font-weight: 500; }
+.section-error{ background: var(--warn-soft); color: var(--warn); border: 1px solid #EBC994; padding: 12px; border-radius: var(--radius-sm); margin-bottom: 12px; font-size: 13px; }
+@media (max-width: 1000px){ .filters{ grid-template-columns: 1fr 1fr; } .header-grid{ grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
 <body>
@@ -1471,31 +1104,29 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     }
 
     // options:
-    //   clickMode: 'item'  -> row gets data-item=internalId, class=clickable (caller wires the click, used for the Item grid -> opens the in-app detail panel)
-    //              'url'   -> row gets data-url=row[urlKey], class=clickable, and this function opens it in a new tab on click
-    //              'none' (default) -> row is not clickable
-    //   urlKey:        the row property holding the NetSuite record URL when clickMode is 'url'
-    //   entityUrlKey:  optional row property (e.g. 'customerUrl'); when present, the "Name"/entity
-    //                  column's cell is wrapped in its own link (stopPropagation'd so it doesn't
-    //                  also trigger the row-level click) so a Customer can be opened independently
-    //                  of the transaction row itself.
+    //   clickMode: 'item' -> whole row clickable, data-item=internalId (Item grid -> opens in-app detail panel)
+    //              'url'  -> whole row clickable, data-url=row[urlKey], opens in a new tab (used for Vendors tab)
+    //              'none' (default) -> row itself is never clickable
+    //   docUrlKey:    row property (e.g. 'viewUrl'); if set, only the Document Number cell becomes a link
+    //   entityUrlKey: row property (e.g. 'entityUrl'); if set, only the Name/entity cell becomes a link
+    // docUrlKey/entityUrlKey let specific cells open a record without making the entire row clickable.
     function renderDynamicRows(bodyId, columns, rows, emptyText, options) {
         options = options || {};
 
         var clickMode = options.clickMode || 'none';
         var urlKey = options.urlKey || null;
+        var docUrlKey = options.docUrlKey || null;
         var entityUrlKey = options.entityUrlKey || null;
 
-        var entityColumnKey = null;
+        var docColumnKey = findColumnKey(columns, docUrlKey, function (c) {
+            var nm = String(c.name || '').toLowerCase();
+            var lbl = String(c.label || '').toLowerCase();
+            return nm === 'tranid' || nm === 'documentnumber' || lbl.indexOf('document number') !== -1;
+        });
 
-        if (entityUrlKey) {
-            for (var i = 0; i < (columns || []).length; i++) {
-                if (!columns[i].join && String(columns[i].name || '').toLowerCase() === 'entity') {
-                    entityColumnKey = columns[i].key;
-                    break;
-                }
-            }
-        }
+        var entityColumnKey = findColumnKey(columns, entityUrlKey, function (c) {
+            return !c.join && String(c.name || '').toLowerCase() === 'entity';
+        });
 
         var body = document.getElementById(bodyId);
         columns = columns || [];
@@ -1512,8 +1143,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         }
 
         body.innerHTML = rows.map(function (row) {
-            var trClass = '';
-            var dataAttr = '';
+            var trClass = '', dataAttr = '';
 
             if (clickMode === 'item') {
                 trClass = ' class="clickable"';
@@ -1524,12 +1154,13 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             }
 
             return '<tr' + trClass + dataAttr + '>' + columns.map(function (column) {
-                var value = row[column.key];
+                var display = formatValue(row[column.key], column);
                 var cls = isNumericLabel(column.label) ? 'num' : '';
-                var display = formatValue(value, column);
 
-                if (entityColumnKey && column.key === entityColumnKey && entityUrlKey && row[entityUrlKey] && display) {
-                    display = '<a href="' + esc(row[entityUrlKey]) + '" target="_blank" rel="noopener" class="row-link" onclick="event.stopPropagation();">' + display + '</a>';
+                if (docColumnKey && column.key === docColumnKey && row[docUrlKey] && display) {
+                    display = linkCell(row[docUrlKey], display);
+                } else if (entityColumnKey && column.key === entityColumnKey && row[entityUrlKey] && display) {
+                    display = linkCell(row[entityUrlKey], display);
                 }
 
                 return td(display, cls);
@@ -1537,14 +1168,30 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         }).join('');
 
         if (clickMode === 'url') {
-            var urlRows = body.querySelectorAll('tr[data-url]');
-
-            urlRows.forEach(function (tr) {
+            body.querySelectorAll('tr[data-url]').forEach(function (tr) {
                 tr.addEventListener('click', function () {
                     window.open(tr.getAttribute('data-url'), '_blank', 'noopener');
                 });
             });
         }
+    }
+
+    function findColumnKey(columns, requiredOption, predicate) {
+        if (!requiredOption) {
+            return null;
+        }
+
+        for (var i = 0; i < (columns || []).length; i++) {
+            if (predicate(columns[i])) {
+                return columns[i].key;
+            }
+        }
+
+        return null;
+    }
+
+    function linkCell(href, display) {
+        return '<a href="' + esc(href) + '" target="_blank" rel="noopener" class="row-link">' + display + '</a>';
     }
 
     function refreshGrid() {
@@ -1767,7 +1414,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             transactions.columns || [],
             transactions.rows || [],
             'No related transactions found for this item.',
-            { clickMode: 'url', urlKey: 'viewUrl', entityUrlKey: 'customerUrl' }
+            { docUrlKey: 'viewUrl', entityUrlKey: 'entityUrl' }
         );
 
         var committedSalesOrders = data.committedSalesOrders || {};
@@ -1778,7 +1425,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             committedSalesOrders.columns || [],
             committedSalesOrders.rows || [],
             'No committed sales order lines found for this item.',
-            { clickMode: 'url', urlKey: 'viewUrl', entityUrlKey: 'customerUrl' }
+            { docUrlKey: 'viewUrl', entityUrlKey: 'entityUrl' }
         );
     }
 
