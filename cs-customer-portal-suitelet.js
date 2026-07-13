@@ -260,6 +260,30 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         });
     }
 
+    // Builds a NetSuite record view URL via N/url.resolveRecord.
+    // Returns '' on failure so callers can fall back to "not clickable" instead of throwing.
+    function buildRecordUrl(recordType, internalId, isEditMode) {
+        if (!recordType || !internalId) {
+            return '';
+        }
+
+        try {
+            return url.resolveRecord({
+                recordType: recordType,
+                recordId: internalId,
+                isEditMode: !!isEditMode
+            });
+        } catch (e) {
+            log.debug('buildRecordUrl failed', {
+                recordType: recordType,
+                internalId: internalId,
+                message: e.message
+            });
+
+            return '';
+        }
+    }
+
     function runDynamicSearch(searchObj, maxRows, includeTotal) {
         const nsColumns = searchObj.columns || [];
         const columns = getColumnMeta(nsColumns);
@@ -288,6 +312,11 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             nsColumns.forEach(function (column, index) {
                 row['c' + index] = getCellValue(result, column);
             });
+
+            // Every row (customer, transaction, etc.) can usually be linked
+            // directly using its own internal id + record type. This is the
+            // only addition to this function - everything above is unchanged.
+            row.viewUrl = buildRecordUrl(row.recordType, row.internalId);
 
             rows.push(row);
 
@@ -821,6 +850,16 @@ select:focus {
     color: var(--signal-dark);
 }
 
+.btn:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+    border-color: var(--line);
+    color: var(--ink);
+}
+
 .btn-primary {
     background: var(--signal);
     border-color: var(--signal);
@@ -927,6 +966,17 @@ tr.clickable:hover td {
 .badge.warn {
     background: var(--warn-soft);
     color: var(--warn);
+}
+
+.row-link {
+    color: var(--signal-dark);
+    text-decoration: underline;
+    text-decoration-color: var(--signal);
+    text-underline-offset: 2px;
+}
+
+.row-link:hover {
+    color: var(--signal);
 }
 
 .detail-head {
@@ -1221,6 +1271,14 @@ tr.clickable:hover td {
                 <div class="btn-group">
 
                     <button
+                        id="viewRecordBtn"
+                        class="btn"
+                        disabled
+                    >
+                        View Record ↗
+                    </button>
+
+                    <button
                         id="exportBtn"
                         class="btn"
                     >
@@ -1382,6 +1440,7 @@ tr.clickable:hover td {
 
     var SUITELET_URL = __SUITELET_URL_JSON__;
     var currentCustomerId = '';
+    var currentCustomerViewUrl = '';
     var currentDetailData = null;
 
     var DETAIL_TABS = [
@@ -1689,13 +1748,52 @@ tr.clickable:hover td {
             .join('');
     }
 
+    function findColumnKey(columns, requiredOption, predicate) {
+        if (!requiredOption) {
+            return null;
+        }
+
+        for (var i = 0; i < (columns || []).length; i++) {
+            if (predicate(columns[i])) {
+                return columns[i].key;
+            }
+        }
+
+        return null;
+    }
+
+    function linkCell(href, display) {
+        return (
+            '<a href="' +
+                esc(href) +
+            '" target="_blank" rel="noopener" class="row-link">' +
+                display +
+            '</a>'
+        );
+    }
+
+    /*
+     * linkOptions (new, optional, additive):
+     *   docUrlKey -> row property (e.g. 'viewUrl'); wraps only the Document Number
+     *   cell in a link. Nothing else about this function changed - the original
+     *   "clickable" boolean row-click behavior below is untouched.
+     */
     function renderDynamicRows(
         bodyId,
         columns,
         rows,
         emptyText,
-        clickable
+        clickable,
+        linkOptions
     ) {
+        linkOptions = linkOptions || {};
+
+        var docColumnKey = findColumnKey(columns, linkOptions.docUrlKey, function (c) {
+            var nm = String(c.name || '').toLowerCase();
+            var lbl = String(c.label || '').toLowerCase();
+            return nm === 'tranid' || nm === 'documentnumber' || lbl.indexOf('document number') !== -1;
+        });
+
         var body =
             document.getElementById(bodyId);
 
@@ -1753,8 +1851,15 @@ tr.clickable:hover td {
                                 ? 'num'
                                 : '';
 
+                        var display =
+                            formatValue(value, column);
+
+                        if (docColumnKey && column.key === docColumnKey && row[linkOptions.docUrlKey] && display) {
+                            display = linkCell(row[linkOptions.docUrlKey], display);
+                        }
+
                         return td(
-                            formatValue(value, column),
+                            display,
                             cls
                         );
                     })
@@ -1784,7 +1889,8 @@ tr.clickable:hover td {
             section.columns || [],
             section.rows || [],
             tab.empty,
-            false
+            false,
+            { docUrlKey: 'viewUrl' }
         );
     }
 
@@ -1945,6 +2051,7 @@ tr.clickable:hover td {
         }
 
         currentCustomerId = customerId;
+        currentCustomerViewUrl = '';
         currentDetailData = null;
 
         showError('');
@@ -1972,6 +2079,10 @@ tr.clickable:hover td {
             '<div class="loading">' +
                 'Loading customer header...' +
             '</div>';
+
+        document.getElementById(
+            'viewRecordBtn'
+        ).disabled = true;
 
         showSectionError(
             'headerError',
@@ -2126,6 +2237,18 @@ tr.clickable:hover td {
                       esc(phone)
                     : ''
             );
+
+        /*
+         * The customer header row carries its own resolved NetSuite record URL
+         * (computed server-side from the customer's own internal id + record
+         * type). New addition - doesn't touch anything else in this function.
+         */
+        currentCustomerViewUrl =
+            ((header.rows || [])[0] || {}).viewUrl || '';
+
+        document.getElementById(
+            'viewRecordBtn'
+        ).disabled = !currentCustomerViewUrl;
 
         showSectionError(
             'headerError',
@@ -2380,6 +2503,21 @@ tr.clickable:hover td {
             if (currentCustomerId) {
                 openCustomer(
                     currentCustomerId
+                );
+            }
+        }
+    );
+
+    document.getElementById(
+        'viewRecordBtn'
+    ).addEventListener(
+        'click',
+        function () {
+            if (currentCustomerViewUrl) {
+                window.open(
+                    currentCustomerViewUrl,
+                    '_blank',
+                    'noopener'
                 );
             }
         }
