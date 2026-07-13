@@ -442,7 +442,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
         if (params.q) {
             dynamicFilters.push([
-                ['nameornumber', 'contains', params.q],
+                ['name', 'contains', params.q],
                 'OR',
                 ['displayname', 'contains', params.q],
                 'OR',
