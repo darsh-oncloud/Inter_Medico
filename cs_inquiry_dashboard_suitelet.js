@@ -38,6 +38,22 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         transactions: 'custscript_img_transaction'
     };
 
+    // Transaction record types whose "entity" field represents a Customer.
+    // Used to decide when to build a clickable Customer link for a transaction row.
+    const CUSTOMER_TRANSACTION_TYPES = [
+        'salesorder',
+        'invoice',
+        'cashsale',
+        'creditmemo',
+        'customerpayment',
+        'customerdeposit',
+        'estimate',
+        'cashrefund',
+        'returnauthorization',
+        'itemfulfillment',
+        'opportunity'
+    ];
+
     function onRequest(context) {
         const request = context.request;
         const response = context.response;
@@ -170,6 +186,31 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         return '';
     }
 
+    // Builds a NetSuite record view URL using N/url.resolveRecord.
+    // Returns '' if it cannot be resolved (missing id/type, or invalid type),
+    // so callers can safely fall back to "not clickable" instead of throwing.
+    function buildRecordUrl(recordType, internalId, isEditMode) {
+        if (!recordType || !internalId) {
+            return '';
+        }
+
+        try {
+            return url.resolveRecord({
+                recordType: recordType,
+                recordId: internalId,
+                isEditMode: !!isEditMode
+            });
+        } catch (e) {
+            log.debug('buildRecordUrl failed', {
+                recordType: recordType,
+                internalId: internalId,
+                message: e.message
+            });
+
+            return '';
+        }
+    }
+
     function getColumnLabel(column, index) {
         if (column.label) {
             return column.label;
@@ -216,7 +257,23 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 
             nsColumns.forEach(function (column, index) {
                 row['c' + index] = getCellValue(result, column);
+
+                // Capture the raw "entity" value (customer/vendor internal id) for
+                // transaction-type searches so the client can link to the customer.
+                if (!column.join && String(column.name || '').toLowerCase() === 'entity') {
+                    row.entityId = safeGetValue(result, column);
+                }
             });
+
+            // The row itself (item, vendor, transaction, etc.) can usually be linked
+            // directly using its own internal id + record type.
+            row.viewUrl = buildRecordUrl(row.recordType, row.internalId);
+
+            // If this row is a customer-facing transaction and we captured an entity id,
+            // build a direct link to that Customer record too.
+            if (row.entityId && CUSTOMER_TRANSACTION_TYPES.indexOf(String(row.recordType).toLowerCase()) !== -1) {
+                row.customerUrl = buildRecordUrl('customer', row.entityId);
+            }
 
             rows.push(row);
 
@@ -228,6 +285,43 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             columns: columns,
             rows: rows
         };
+    }
+
+    // Looks through a dataset's columns for a field joined to Vendor that returns
+    // the Vendor's own internal id (label/name containing "internal id"), and, if
+    // found, stamps a resolvable Vendor record URL onto every row.
+    //
+    // NOTE: this requires the "Item Vendors" saved search (custscript_img_item_vendors)
+    // to include a column joined to Vendor -> Internal ID. If that column isn't present,
+    // vendor rows simply won't be clickable (no error is thrown).
+    function attachVendorLinks(dataSet) {
+        const columns = dataSet.columns || [];
+        let idKey = null;
+
+        for (let i = 0; i < columns.length; i++) {
+            const col = columns[i];
+            const join = String(col.join || '').toLowerCase();
+            const name = String(col.name || '').toLowerCase();
+
+            if (join === 'vendor' && name === 'internalid') {
+                idKey = col.key;
+                break;
+            }
+        }
+
+        if (!idKey) {
+            return dataSet;
+        }
+
+        dataSet.rows.forEach(function (row) {
+            const vendorId = row[idKey];
+
+            if (vendorId) {
+                row.vendorUrl = buildRecordUrl('vendor', vendorId);
+            }
+        });
+
+        return dataSet;
     }
 
     function buildAndExpression(expressions) {
@@ -527,7 +621,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             ['internalid', 'anyof', itemId]
         ]);
 
-        return runDynamicSearch(vendorSearch, MAX_DETAIL_ROWS, false);
+        return attachVendorLinks(runDynamicSearch(vendorSearch, MAX_DETAIL_ROWS, false));
     }
 
     function getItemBins(itemId) {
@@ -746,6 +840,16 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         color: var(--signal-dark);
     }
 
+    .btn:disabled {
+        opacity: .45;
+        cursor: not-allowed;
+    }
+
+    .btn:disabled:hover {
+        border-color: var(--line);
+        color: var(--ink);
+    }
+
     .btn-primary {
         background: var(--signal);
         border-color: var(--signal);
@@ -756,6 +860,12 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         background: var(--signal-dark);
         border-color: var(--signal-dark);
         color: #fff;
+    }
+
+    .btn-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
     }
 
     .meta {
@@ -842,6 +952,17 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     .badge.active {
         background: var(--good-soft);
         color: var(--good);
+    }
+
+    .row-link {
+        color: var(--signal-dark);
+        text-decoration: underline;
+        text-decoration-color: var(--signal);
+        text-underline-offset: 2px;
+    }
+
+    .row-link:hover {
+        color: var(--signal);
     }
 
     .detail-head {
@@ -1074,7 +1195,8 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
                     <div id="itemTitle" class="item-title"></div>
                     <div id="itemDesc" class="item-desc"></div>
                 </div>
-                <div>
+                <div class="btn-row">
+                    <button id="viewRecordBtn" class="btn" disabled>View Record ↗</button>
                     <button id="refreshDetailBtn" class="btn btn-primary">Refresh Item</button>
                 </div>
             </div>
@@ -1173,6 +1295,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
 (function () {
     var SUITELET_URL = __SUITELET_URL_JSON__;
     var currentItemId = '';
+    var currentItemViewUrl = '';
 
     function esc(value) {
         if (value === null || value === undefined || value === '') {
@@ -1347,7 +1470,33 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         }).join('');
     }
 
-    function renderDynamicRows(bodyId, columns, rows, emptyText, clickable) {
+    // options:
+    //   clickMode: 'item'  -> row gets data-item=internalId, class=clickable (caller wires the click, used for the Item grid -> opens the in-app detail panel)
+    //              'url'   -> row gets data-url=row[urlKey], class=clickable, and this function opens it in a new tab on click
+    //              'none' (default) -> row is not clickable
+    //   urlKey:        the row property holding the NetSuite record URL when clickMode is 'url'
+    //   entityUrlKey:  optional row property (e.g. 'customerUrl'); when present, the "Name"/entity
+    //                  column's cell is wrapped in its own link (stopPropagation'd so it doesn't
+    //                  also trigger the row-level click) so a Customer can be opened independently
+    //                  of the transaction row itself.
+    function renderDynamicRows(bodyId, columns, rows, emptyText, options) {
+        options = options || {};
+
+        var clickMode = options.clickMode || 'none';
+        var urlKey = options.urlKey || null;
+        var entityUrlKey = options.entityUrlKey || null;
+
+        var entityColumnKey = null;
+
+        if (entityUrlKey) {
+            for (var i = 0; i < (columns || []).length; i++) {
+                if (!columns[i].join && String(columns[i].name || '').toLowerCase() === 'entity') {
+                    entityColumnKey = columns[i].key;
+                    break;
+                }
+            }
+        }
+
         var body = document.getElementById(bodyId);
         columns = columns || [];
         rows = rows || [];
@@ -1363,16 +1512,39 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         }
 
         body.innerHTML = rows.map(function (row) {
-            var trClass = clickable ? ' class="clickable"' : '';
-            var dataAttr = clickable ? ' data-item="' + esc(row.internalId) + '"' : '';
+            var trClass = '';
+            var dataAttr = '';
+
+            if (clickMode === 'item') {
+                trClass = ' class="clickable"';
+                dataAttr = ' data-item="' + esc(row.internalId) + '"';
+            } else if (clickMode === 'url' && urlKey && row[urlKey]) {
+                trClass = ' class="clickable"';
+                dataAttr = ' data-url="' + esc(row[urlKey]) + '"';
+            }
 
             return '<tr' + trClass + dataAttr + '>' + columns.map(function (column) {
                 var value = row[column.key];
                 var cls = isNumericLabel(column.label) ? 'num' : '';
+                var display = formatValue(value, column);
 
-                return td(formatValue(value, column), cls);
+                if (entityColumnKey && column.key === entityColumnKey && entityUrlKey && row[entityUrlKey] && display) {
+                    display = '<a href="' + esc(row[entityUrlKey]) + '" target="_blank" rel="noopener" class="row-link" onclick="event.stopPropagation();">' + display + '</a>';
+                }
+
+                return td(display, cls);
             }).join('') + '</tr>';
         }).join('');
+
+        if (clickMode === 'url') {
+            var urlRows = body.querySelectorAll('tr[data-url]');
+
+            urlRows.forEach(function (tr) {
+                tr.addEventListener('click', function () {
+                    window.open(tr.getAttribute('data-url'), '_blank', 'noopener');
+                });
+            });
+        }
     }
 
     function refreshGrid() {
@@ -1389,7 +1561,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             document.getElementById('totalCount').innerHTML = esc(data.total || 0);
 
             renderHead('gridHeadRow', columns);
-            renderDynamicRows('gridRows', columns, rows, 'No items found for selected filters.', true);
+            renderDynamicRows('gridRows', columns, rows, 'No items found for selected filters.', { clickMode: 'item' });
 
             var clickableRows = document.querySelectorAll('#gridRows tr[data-item]');
 
@@ -1449,6 +1621,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         }
 
         currentItemId = itemId;
+        currentItemViewUrl = '';
         showError('');
 
         document.getElementById('gridSection').style.display = 'none';
@@ -1457,6 +1630,9 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         document.getElementById('itemTitle').innerHTML = 'Loading item...';
         document.getElementById('itemDesc').innerHTML = '';
         document.getElementById('headerGrid').innerHTML = '<div class="loading">Loading item header...</div>';
+
+        var viewRecordBtn = document.getElementById('viewRecordBtn');
+        viewRecordBtn.disabled = true;
 
         showSectionError('headerError', '');
         showSectionError('locationError', '');
@@ -1534,6 +1710,11 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             (displayName ? '<b>' + esc(displayName) + '</b>' : '') +
             (description ? '<br>' + esc(description) : '');
 
+        // The item header row carries its own resolved NetSuite record URL
+        // (computed server-side from the item's own internal id + record type).
+        currentItemViewUrl = ((header.rows || [])[0] || {}).viewUrl || '';
+        document.getElementById('viewRecordBtn').disabled = !currentItemViewUrl;
+
         showSectionError('headerError', header.error || '');
         renderHeaderCards(header);
 
@@ -1544,8 +1725,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             'locationRows',
             locations.columns || [],
             locations.rows || [],
-            'No location inventory found for this item.',
-            false
+            'No location inventory found for this item.'
         );
 
         var vendors = data.vendors || {};
@@ -1556,7 +1736,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             vendors.columns || [],
             vendors.rows || [],
             'No vendor details found for this item.',
-            false
+            { clickMode: 'url', urlKey: 'vendorUrl' }
         );
 
         var bins = data.bins || {};
@@ -1566,8 +1746,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             'binRows',
             bins.columns || [],
             bins.rows || [],
-            'No bin balance found for this item.',
-            false
+            'No bin balance found for this item.'
         );
 
         var inventoryNumbers = data.inventoryNumbers || {};
@@ -1577,8 +1756,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             'inventoryNumberRows',
             inventoryNumbers.columns || [],
             inventoryNumbers.rows || [],
-            'No inventory numbers found for this item.',
-            false
+            'No inventory numbers found for this item.'
         );
 
         var transactions = data.transactions || {};
@@ -1589,7 +1767,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             transactions.columns || [],
             transactions.rows || [],
             'No related transactions found for this item.',
-            false
+            { clickMode: 'url', urlKey: 'viewUrl', entityUrlKey: 'customerUrl' }
         );
 
         var committedSalesOrders = data.committedSalesOrders || {};
@@ -1600,7 +1778,7 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
             committedSalesOrders.columns || [],
             committedSalesOrders.rows || [],
             'No committed sales order lines found for this item.',
-            false
+            { clickMode: 'url', urlKey: 'viewUrl', entityUrlKey: 'customerUrl' }
         );
     }
 
@@ -1643,6 +1821,12 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
     document.getElementById('refreshDetailBtn').addEventListener('click', function () {
         if (currentItemId) {
             openItem(currentItemId);
+        }
+    });
+
+    document.getElementById('viewRecordBtn').addEventListener('click', function () {
+        if (currentItemViewUrl) {
+            window.open(currentItemViewUrl, '_blank', 'noopener');
         }
     });
 
