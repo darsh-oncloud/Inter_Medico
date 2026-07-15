@@ -1,75 +1,98 @@
 /**
  * @NApiVersion 2.1
  * @NScriptType ClientScript
- *
- * PURPOSE
- * Fast on-screen warning if a received line's Inventory Detail is missing
- * Bin, Status, or Expiration Date. This is a convenience check only —
- * the beforeSubmit User Event script is the real enforcement (covers
- * CSV imports, integrations, etc). This script just saves the user a
- * round trip to the server.
  */
 define([], function () {
 
+    var LOG_PREFIX = '[InvDetailRequired]';
+
+    var REQUIRED_FIELDS = [
+        { id: 'binnumber', label: 'Bin' },
+        { id: 'status', label: 'Status' },
+        { id: 'expirationdate', label: 'Expiration Date' }
+    ];
+
     function saveRecord(context) {
+        console.log(LOG_PREFIX, '=== saveRecord fired - starting validation ===');
+
         var rec = context.currentRecord;
         var lineCount = rec.getLineCount({ sublistId: 'item' });
 
+        console.log(LOG_PREFIX, 'Total item lines on this Item Receipt:', lineCount);
+
         for (var i = 0; i < lineCount; i++) {
-            var qty = rec.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i });
-            if (!qty || Number(qty) <= 0) continue;
+            var itemId = rec.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
 
-            var sub;
+            console.log(LOG_PREFIX, 'Line ' + (i + 1) + ' - item internal id:', itemId);
+
+            if (!itemId) {
+                console.log(LOG_PREFIX, 'Line ' + (i + 1) + ' - no item selected, skipping.');
+                continue;
+            }
+
+            var detail;
+
             try {
-                sub = rec.getSublistSubrecord({ sublistId: 'item', fieldId: 'inventorydetail', line: i });
+                detail = rec.getSublistSubrecord({ sublistId: 'item', fieldId: 'inventorydetail', line: i });
             } catch (e) {
-                continue; // no inventory detail on this line - nothing to check
-            }
-            if (!sub) continue;
-
-            var assignCount = sub.getLineCount({ sublistId: 'inventoryassignment' });
-
-            if (assignCount === 0) {
-                alert('Line ' + (i + 1) + ': Inventory Detail has no Bin/Status/Lot assigned yet.');
-                return false;
+                console.log(LOG_PREFIX, 'Line ' + (i + 1) + ' - error opening inventory detail subrecord:', e.message);
+                detail = null;
             }
 
-            for (var j = 0; j < assignCount; j++) {
-                var bin = safeGet(sub, 'binnumber', j);
-                var status = safeGet(sub, 'inventorystatus', j);
-                var expiry = safeGet(sub, 'expirationdate', j);
-                var lot = safeGet(sub, 'issueinventorynumber', j) || safeGet(sub, 'receiptinventorynumber', j);
+            if (!detail) {
+                console.log(LOG_PREFIX, 'Line ' + (i + 1) + ' - no Inventory Detail subrecord (item does not use bins/lots/serials). Skipping.');
+                continue;
+            }
 
-                // bin field only exists if item uses bins - skip if not applicable (null)
-                if (bin !== null && !bin) {
-                    alert('Line ' + (i + 1) + ', row ' + (j + 1) + ': Bin Number is required.');
-                    return false;
-                }
+            var detailLineCount = detail.getLineCount({ sublistId: 'inventoryassignment' });
 
-                // status field only exists if inventory status feature applies - skip if not applicable
-                if (status !== null && !status) {
-                    alert('Line ' + (i + 1) + ', row ' + (j + 1) + ': Inventory Status is required.');
-                    return false;
-                }
+            console.log(LOG_PREFIX, 'Line ' + (i + 1) + ' - inventory detail rows found:', detailLineCount);
 
-                // expiration only required for lot-numbered lines
-                if (lot && expiry !== null && !expiry) {
-                    alert('Line ' + (i + 1) + ', row ' + (j + 1) + ': Expiration Date is required for lot-numbered items.');
+            for (var j = 0; j < detailLineCount; j++) {
+                var missing = [];
+                var values = {};
+
+                REQUIRED_FIELDS.forEach(function (field) {
+                    var value = detail.getSublistValue({
+                        sublistId: 'inventoryassignment',
+                        fieldId: field.id,
+                        line: j
+                    });
+
+                    values[field.label] = value;
+
+                    if (!value) {
+                        missing.push(field.label);
+                    }
+                });
+
+                console.log(
+                    LOG_PREFIX,
+                    'Line ' + (i + 1) + ', inventory detail row ' + (j + 1) + ' - values:',
+                    values
+                );
+
+                if (missing.length) {
+                    console.log(
+                        LOG_PREFIX,
+                        'Line ' + (i + 1) + ', inventory detail row ' + (j + 1) +
+                        ' - BLOCKING save. Missing:', missing
+                    );
+
+                    alert(
+                        'Item line ' + (i + 1) + ', inventory detail row ' + (j + 1) + ':\n' +
+                        'The following field(s) are required before this Item Receipt can be saved:\n' +
+                        missing.join(', ')
+                    );
+
+                    console.log(LOG_PREFIX, '=== saveRecord returning false (save blocked) ===');
                     return false;
                 }
             }
         }
 
+        console.log(LOG_PREFIX, '=== All inventory detail rows valid - saveRecord returning true (save allowed) ===');
         return true;
-    }
-
-    // Returns the field value, or null if the field doesn't apply to this line
-    function safeGet(subrecord, fieldId, line) {
-        try {
-            return subrecord.getSublistValue({ sublistId: 'inventoryassignment', fieldId: fieldId, line: line });
-        } catch (e) {
-            return null;
-        }
     }
 
     return {
