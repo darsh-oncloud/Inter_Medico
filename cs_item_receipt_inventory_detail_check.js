@@ -1,4 +1,27 @@
 /**
+ * CS Item Receipt - Require Bin / Status / Expiration Date on Inventory Detail
+ * (DEBUG VERSION - with console.log statements for testing)
+ *
+ * Deploy this Client Script on the Item Receipt record type via:
+ * Customization > Scripting > Scripts > New (upload this file, it will
+ * auto-detect as Client Script) > Deploy Script > Applies To: Item Receipt.
+ *
+ * Blocks Save if any inventory-detail line on any item line is missing
+ * Bin, Status, or Expiration Date. Only checks lines where NetSuite has
+ * actually created an Inventory Detail subrecord (items using bins/lots/
+ * serials) - non-tracked items are skipped.
+ *
+ * HOW TO SEE THE LOGS WHILE TESTING:
+ * Open the browser console before clicking Save:
+ *   Chrome/Edge: F12 (or Ctrl+Shift+I), then the "Console" tab.
+ * Every line printed here starts with "[InvDetailRequired]".
+ *
+ * FIELD IDS on the 'inventoryassignment' sublist of Inventory Detail:
+ *   binnumber        - Bin
+ *   inventorystatus  - Status   (NOT 'status' - that field id doesn't exist
+ *                       on this sublist and will throw if you use it)
+ *   expirationdate   - Expiration Date
+ *
  * @NApiVersion 2.1
  * @NScriptType ClientScript
  */
@@ -8,7 +31,7 @@ define([], function () {
 
     var REQUIRED_FIELDS = [
         { id: 'binnumber', label: 'Bin' },
-        { id: 'status', label: 'Status' },
+        { id: 'inventorystatus', label: 'Status' },
         { id: 'expirationdate', label: 'Expiration Date' }
     ];
 
@@ -52,19 +75,30 @@ define([], function () {
                 var missing = [];
                 var values = {};
 
-                REQUIRED_FIELDS.forEach(function (field) {
-                    var value = detail.getSublistValue({
-                        sublistId: 'inventoryassignment',
-                        fieldId: field.id,
-                        line: j
-                    });
+                for (var k = 0; k < REQUIRED_FIELDS.length; k++) {
+                    var field = REQUIRED_FIELDS[k];
+                    var value = null;
+
+                    // Wrapped individually - if a field id doesn't exist for this item
+                    // (e.g. status not applicable), it won't crash the whole check.
+                    try {
+                        value = detail.getSublistValue({
+                            sublistId: 'inventoryassignment',
+                            fieldId: field.id,
+                            line: j
+                        });
+                    } catch (fieldErr) {
+                        console.log(LOG_PREFIX, 'Field "' + field.id + '" not applicable on this line:', fieldErr.message);
+                        value = null; // treat as not-applicable, don't require it
+                    }
 
                     values[field.label] = value;
 
-                    if (!value) {
+                    if (value === '' ) {
+                        // field exists but was left blank - this is the case we want to catch
                         missing.push(field.label);
                     }
-                });
+                }
 
                 console.log(
                     LOG_PREFIX,
