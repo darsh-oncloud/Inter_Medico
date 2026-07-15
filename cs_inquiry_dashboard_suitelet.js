@@ -681,6 +681,56 @@ define(['N/search', 'N/url', 'N/runtime', 'N/log'], function (search, url, runti
         return buildHtml().replace('__SUITELET_URL_JSON__', JSON.stringify(suiteletUrl));
     }
 
+    // Detail tabs are described once here and used to generate both the tab
+    // button bar and the tab panel markup below (buildTabButtonsHtml /
+    // buildTabPanelsHtml), instead of hand-duplicating near-identical HTML
+    // blocks for every tab. idRoot drives the element ids (e.g. "location" ->
+    // locationHeadRow/locationRows/locationError) and key matches the property
+    // name on the itemDetail JSON response (data.locations, data.vendors, etc).
+    const TAB_DEFS = [
+        { key: 'locations', idRoot: 'location', label: 'Locations' },
+        { key: 'vendors', idRoot: 'vendor', label: 'Vendors' },
+        { key: 'bins', idRoot: 'bin', label: 'Bin Numbers' },
+        { key: 'inventoryNumbers', idRoot: 'inventoryNumber', label: 'Inventory Numbers' },
+        { key: 'transactions', idRoot: 'transaction', label: 'Related Transactions' },
+        { key: 'committedSalesOrders', idRoot: 'committedSalesOrder', label: 'Committed SO Lines' }
+    ];
+
+    function buildTabButtonsHtml() {
+        return TAB_DEFS.map(function (tab, index) {
+            return '<button class="tab-btn' + (index === 0 ? ' active' : '') +
+                '" data-tab="' + tab.idRoot + 'Tab">' + tab.label + '</button>';
+        }).join('');
+    }
+
+    // Every panel gets the same generic filter bar (search + up to two
+    // auto-detected dropdown filters + a date range). The client-side script
+    // detects which columns exist per tab at render time and hides whichever
+    // filter fields don't apply, so this markup doesn't need to vary per tab.
+    function buildTabPanelsHtml() {
+        return TAB_DEFS.map(function (tab, index) {
+            return '<div id="' + tab.idRoot + 'Tab" class="tab-panel' + (index === 0 ? ' active' : '') + '">' +
+                '<div class="tab-filter-bar" data-tab-key="' + tab.key + '">' +
+                    '<div class="tf-field tf-q-field"><label>Search</label>' +
+                        '<input type="text" class="tf-q" placeholder="Filter this tab..."></div>' +
+                    '<div class="tf-field tf-cat1-field"><label class="tf-cat1-label">Filter</label>' +
+                        '<select class="tf-cat1"><option value="">All</option></select></div>' +
+                    '<div class="tf-field tf-cat2-field"><label class="tf-cat2-label">Filter</label>' +
+                        '<select class="tf-cat2"><option value="">All</option></select></div>' +
+                    '<div class="tf-field tf-date-field"><label>Date From</label>' +
+                        '<input type="date" class="tf-date-from"></div>' +
+                    '<div class="tf-field tf-date-field"><label>Date To</label>' +
+                        '<input type="date" class="tf-date-to"></div>' +
+                    '<div class="tf-field tf-actions"><span class="tf-count"></span>' +
+                        '<button class="btn tf-clear" type="button">Clear</button></div>' +
+                '</div>' +
+                '<div id="' + tab.idRoot + 'Error"></div>' +
+                '<div class="table-wrap"><table><thead><tr id="' + tab.idRoot + 'HeadRow"></tr></thead>' +
+                    '<tbody id="' + tab.idRoot + 'Rows"></tbody></table></div>' +
+            '</div>';
+        }).join('');
+    }
+
     function buildHtml() {
         return `<!doctype html>
 <html>
@@ -740,6 +790,14 @@ tr.clickable:hover td{ background: var(--signal-soft); }
 .tab-btn.active{ color: var(--signal-dark); border-bottom-color: var(--signal); }
 .tab-panel{ display: none; }
 .tab-panel.active{ display: block; }
+.tab-filter-bar{ display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-bottom: 14px; padding: 12px 14px; background: #F8F9F6; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.tf-field{ min-width: 130px; }
+.tf-field label{ margin-bottom: 4px; }
+.tf-field input, .tf-field select{ height: 34px; font-size: 12.5px; }
+.tf-field.tf-q-field{ min-width: 220px; flex: 1 1 220px; }
+.tf-field.tf-actions{ margin-left: auto; min-width: 0; }
+.tf-field.tf-actions .btn{ height: 34px; padding: 0 12px; font-size: 12px; }
+.tf-count{ font-size: 11.5px; color: var(--faint); margin-left: 4px; align-self: center; white-space: nowrap; }
 .empty{ padding: 38px; text-align: center; color: var(--faint); font-size: 13px; }
 .loading{ padding: 22px; color: var(--muted); text-align: center; font-size: 13px; }
 .error{ background: var(--warn-soft); color: var(--warn); border: 1px solid #EBC994; padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 14px; display: none; font-size: 13px; font-weight: 500; }
@@ -839,86 +897,9 @@ tr.clickable:hover td{ background: var(--signal-soft); }
         </div>
 
         <div class="card">
-            <div class="tabs">
-                <button class="tab-btn active" data-tab="locationsTab">Locations</button>
-                <button class="tab-btn" data-tab="vendorsTab">Vendors</button>
-                <button class="tab-btn" data-tab="binsTab">Bin Numbers</button>
-                <button class="tab-btn" data-tab="inventoryNumbersTab">Inventory Numbers</button>
-                <button class="tab-btn" data-tab="transactionsTab">Related Transactions</button>
-                <button class="tab-btn" data-tab="committedSalesOrdersTab">Committed SO Lines</button>
-            </div>
+            <div class="tabs">${buildTabButtonsHtml()}</div>
 
-            <div id="locationsTab" class="tab-panel active">
-                <div id="locationError"></div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr id="locationHeadRow"></tr>
-                        </thead>
-                        <tbody id="locationRows"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="vendorsTab" class="tab-panel">
-                <div id="vendorError"></div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr id="vendorHeadRow"></tr>
-                        </thead>
-                        <tbody id="vendorRows"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="binsTab" class="tab-panel">
-                <div id="binError"></div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr id="binHeadRow"></tr>
-                        </thead>
-                        <tbody id="binRows"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="inventoryNumbersTab" class="tab-panel">
-                <div id="inventoryNumberError"></div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr id="inventoryNumberHeadRow"></tr>
-                        </thead>
-                        <tbody id="inventoryNumberRows"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="transactionsTab" class="tab-panel">
-                <div id="transactionError"></div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr id="transactionHeadRow"></tr>
-                        </thead>
-                        <tbody id="transactionRows"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="committedSalesOrdersTab" class="tab-panel">
-                <div id="committedSalesOrderError"></div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr id="committedSalesOrderHeadRow"></tr>
-                        </thead>
-                        <tbody id="committedSalesOrderRows"></tbody>
-                    </table>
-                </div>
-            </div>
+            ${buildTabPanelsHtml()}
         </div>
     </div>
 
@@ -929,6 +910,29 @@ tr.clickable:hover td{ background: var(--signal-soft); }
     var SUITELET_URL = __SUITELET_URL_JSON__;
     var currentItemId = '';
     var currentItemViewUrl = '';
+    var currentDetailData = null;
+    var tabFilterState = {};
+
+    // Mirrors the server-side TAB_DEFS. renderOpts controls how each tab's
+    // rows link out: vendors get a visible link on the vendor-name cell (plus
+    // the whole row is already clickable); transactions/committed SO get
+    // visible links on the document number and entity (customer/vendor) cells.
+    var DETAIL_TABS = [
+        { key: 'locations', idRoot: 'location', label: 'Locations', renderOpts: {} },
+        { key: 'vendors', idRoot: 'vendor', label: 'Vendors', renderOpts: { clickMode: 'url', urlKey: 'vendorUrl', linkColumns: [{ urlKey: 'vendorUrl', match: isVendorNameColumn }] } },
+        { key: 'bins', idRoot: 'bin', label: 'Bin Numbers', renderOpts: {} },
+        { key: 'inventoryNumbers', idRoot: 'inventoryNumber', label: 'Inventory Numbers', renderOpts: {} },
+        { key: 'transactions', idRoot: 'transaction', label: 'Related Transactions', renderOpts: { linkColumns: [{ urlKey: 'viewUrl', match: isDocNumberColumn }, { urlKey: 'entityUrl', match: isEntityColumn }] } },
+        { key: 'committedSalesOrders', idRoot: 'committedSalesOrder', label: 'Committed SO Lines', renderOpts: { linkColumns: [{ urlKey: 'viewUrl', match: isDocNumberColumn }, { urlKey: 'entityUrl', match: isEntityColumn }] } }
+    ];
+
+    // Keyword groups tried in order to auto-detect up to two categorical
+    // (dropdown) filter columns per tab. Whichever group finds a column first
+    // becomes Filter 1, the next distinct match becomes Filter 2. This is what
+    // lets every tab (Locations, Vendors, Bins, Inventory Numbers,
+    // Transactions, Committed SO) get sensible filters without hardcoding
+    // column names per tab.
+    var CATEGORY_KEYWORD_GROUPS = [['location'], ['vendor'], ['status'], ['type'], ['class'], ['bin']];
 
     function esc(value) {
         if (value === null || value === undefined || value === '') {
@@ -968,19 +972,11 @@ tr.clickable:hover td{ background: var(--signal-soft); }
             return '';
         }
 
-        if (value === true) {
+        if (value === true || String(value) === 'T') {
             return 'Yes';
         }
 
-        if (value === false) {
-            return 'No';
-        }
-
-        if (String(value) === 'T') {
-            return 'Yes';
-        }
-
-        if (String(value) === 'F') {
+        if (value === false || String(value) === 'F') {
             return 'No';
         }
 
@@ -1023,6 +1019,10 @@ tr.clickable:hover td{ background: var(--signal-soft); }
 
     function showSectionError(id, message) {
         var el = document.getElementById(id);
+
+        if (!el) {
+            return;
+        }
 
         if (!message) {
             el.innerHTML = '';
@@ -1103,29 +1103,71 @@ tr.clickable:hover td{ background: var(--signal-soft); }
         }).join('');
     }
 
+    // ---- generic column keyword matching (used for both links and filters) ----
+
+    function getColumnKeyByKeywords(columns, keywords) {
+        for (var i = 0; i < (columns || []).length; i++) {
+            var haystack = String((columns[i].name || '') + ' ' + (columns[i].label || '')).toLowerCase();
+
+            for (var j = 0; j < keywords.length; j++) {
+                if (haystack.indexOf(keywords[j]) !== -1) {
+                    return columns[i].key;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function isDocNumberColumn(c) {
+        var nm = String(c.name || '').toLowerCase();
+        var lbl = String(c.label || '').toLowerCase();
+        return nm === 'tranid' || nm === 'documentnumber' || lbl.indexOf('document number') !== -1;
+    }
+
+    function isEntityColumn(c) {
+        return !c.join && String(c.name || '').toLowerCase() === 'entity';
+    }
+
+    function isVendorNameColumn(c) {
+        var name = String(c.name || '').toLowerCase();
+        var label = String(c.label || '').toLowerCase();
+
+        if (!c.join && name === 'entity') {
+            return true;
+        }
+
+        if (label.indexOf('vendor name') !== -1 || label === 'vendor') {
+            return true;
+        }
+
+        return label.indexOf('vendor') !== -1 && label.indexOf('internal id') === -1;
+    }
+
     // options:
     //   clickMode: 'item' -> whole row clickable, data-item=internalId (Item grid -> opens in-app detail panel)
     //              'url'  -> whole row clickable, data-url=row[urlKey], opens in a new tab (used for Vendors tab)
-    //              'none' (default) -> row itself is never clickable
-    //   docUrlKey:    row property (e.g. 'viewUrl'); if set, only the Document Number cell becomes a link
-    //   entityUrlKey: row property (e.g. 'entityUrl'); if set, only the Name/entity cell becomes a link
-    // docUrlKey/entityUrlKey let specific cells open a record without making the entire row clickable.
+    //   linkColumns: [{ urlKey, match }] -> wraps the first matching column's display value in a visible link
+    //                using row[urlKey], independent of whether the whole row is also clickable.
     function renderDynamicRows(bodyId, columns, rows, emptyText, options) {
         options = options || {};
 
         var clickMode = options.clickMode || 'none';
         var urlKey = options.urlKey || null;
-        var docUrlKey = options.docUrlKey || null;
-        var entityUrlKey = options.entityUrlKey || null;
 
-        var docColumnKey = findColumnKey(columns, docUrlKey, function (c) {
-            var nm = String(c.name || '').toLowerCase();
-            var lbl = String(c.label || '').toLowerCase();
-            return nm === 'tranid' || nm === 'documentnumber' || lbl.indexOf('document number') !== -1;
-        });
+        var resolvedLinks = (options.linkColumns || []).map(function (lc) {
+            var key = null;
 
-        var entityColumnKey = findColumnKey(columns, entityUrlKey, function (c) {
-            return !c.join && String(c.name || '').toLowerCase() === 'entity';
+            for (var i = 0; i < (columns || []).length; i++) {
+                if (lc.match(columns[i])) {
+                    key = columns[i].key;
+                    break;
+                }
+            }
+
+            return { key: key, urlKey: lc.urlKey };
+        }).filter(function (rl) {
+            return rl.key;
         });
 
         var body = document.getElementById(bodyId);
@@ -1157,10 +1199,11 @@ tr.clickable:hover td{ background: var(--signal-soft); }
                 var display = formatValue(row[column.key], column);
                 var cls = isNumericLabel(column.label) ? 'num' : '';
 
-                if (docColumnKey && column.key === docColumnKey && row[docUrlKey] && display) {
-                    display = linkCell(row[docUrlKey], display);
-                } else if (entityColumnKey && column.key === entityColumnKey && row[entityUrlKey] && display) {
-                    display = linkCell(row[entityUrlKey], display);
+                for (var i = 0; i < resolvedLinks.length; i++) {
+                    if (resolvedLinks[i].key === column.key && row[resolvedLinks[i].urlKey] && display) {
+                        display = linkCell(row[resolvedLinks[i].urlKey], display);
+                        break;
+                    }
                 }
 
                 return td(display, cls);
@@ -1169,30 +1212,269 @@ tr.clickable:hover td{ background: var(--signal-soft); }
 
         if (clickMode === 'url') {
             body.querySelectorAll('tr[data-url]').forEach(function (tr) {
-                tr.addEventListener('click', function () {
+                tr.addEventListener('click', function (e) {
+                    // Let a cell-level link (e.g. the vendor name link) handle its
+                    // own navigation instead of also triggering the row's, which
+                    // would otherwise open two tabs for a single click.
+                    if (e.target.closest('a')) {
+                        return;
+                    }
+
                     window.open(tr.getAttribute('data-url'), '_blank', 'noopener');
                 });
             });
         }
     }
 
-    function findColumnKey(columns, requiredOption, predicate) {
-        if (!requiredOption) {
-            return null;
-        }
-
-        for (var i = 0; i < (columns || []).length; i++) {
-            if (predicate(columns[i])) {
-                return columns[i].key;
-            }
-        }
-
-        return null;
-    }
-
     function linkCell(href, display) {
         return '<a href="' + esc(href) + '" target="_blank" rel="noopener" class="row-link">' + display + '</a>';
     }
+
+    // ---- per-tab filter bars ----
+
+    function getTabFilterState(tabKey) {
+        if (!tabFilterState[tabKey]) {
+            tabFilterState[tabKey] = { q: '', cat1: '', cat2: '', dateFrom: '', dateTo: '' };
+        }
+
+        return tabFilterState[tabKey];
+    }
+
+    function detectCategoricalColumns(columns) {
+        var found = [];
+        var usedKeys = {};
+
+        for (var i = 0; i < CATEGORY_KEYWORD_GROUPS.length && found.length < 2; i++) {
+            var key = getColumnKeyByKeywords(columns, CATEGORY_KEYWORD_GROUPS[i]);
+
+            if (key && !usedKeys[key]) {
+                usedKeys[key] = true;
+
+                var column = columns.filter(function (c) { return c.key === key; })[0];
+                found.push({ key: key, label: column ? column.label : CATEGORY_KEYWORD_GROUPS[i][0] });
+            }
+        }
+
+        return found;
+    }
+
+    function parseRowDate(value) {
+        if (!value) {
+            return null;
+        }
+
+        var d = new Date(value);
+
+        if (isNaN(d.getTime())) {
+            var parts = String(value).split('/');
+
+            if (parts.length === 3) {
+                d = new Date(Number(parts[2]), Number(parts[0]) - 1, Number(parts[1]));
+            }
+        }
+
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    function applyTabFilters(section, tabKey) {
+        section = section || { columns: [], rows: [] };
+
+        var columns = section.columns || [];
+        var rows = section.rows || [];
+        var state = getTabFilterState(tabKey);
+        var dateKey = getColumnKeyByKeywords(columns, ['date']);
+
+        return rows.filter(function (row) {
+            if (state.cat1 && String(row[state.cat1Key] || '') !== state.cat1) {
+                return false;
+            }
+
+            if (state.cat2 && String(row[state.cat2Key] || '') !== state.cat2) {
+                return false;
+            }
+
+            if ((state.dateFrom || state.dateTo) && dateKey) {
+                var rowDate = parseRowDate(row[dateKey]);
+
+                if (!rowDate) {
+                    return false;
+                }
+
+                if (state.dateFrom && rowDate < new Date(state.dateFrom)) {
+                    return false;
+                }
+
+                if (state.dateTo) {
+                    var toDate = new Date(state.dateTo);
+                    toDate.setHours(23, 59, 59, 999);
+
+                    if (rowDate > toDate) {
+                        return false;
+                    }
+                }
+            }
+
+            if (state.q) {
+                var q = state.q.toLowerCase();
+
+                var matched = columns.some(function (col) {
+                    var v = row[col.key];
+                    return v !== null && v !== undefined && String(v).toLowerCase().indexOf(q) !== -1;
+                });
+
+                if (!matched) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+    }
+
+    function populateFilterBar(tabKey, columns, rows) {
+        var bar = document.querySelector('.tab-filter-bar[data-tab-key="' + tabKey + '"]');
+
+        if (!bar) {
+            return;
+        }
+
+        var state = getTabFilterState(tabKey);
+        var cats = detectCategoricalColumns(columns);
+
+        ['cat1', 'cat2'].forEach(function (slot, index) {
+            var fieldEl = bar.querySelector('.tf-' + slot + '-field');
+            var selectEl = bar.querySelector('.tf-' + slot);
+            var labelEl = bar.querySelector('.tf-' + slot + '-label');
+            var cat = cats[index];
+
+            if (!cat) {
+                fieldEl.style.display = 'none';
+                state[slot] = '';
+                state[slot + 'Key'] = null;
+                return;
+            }
+
+            fieldEl.style.display = '';
+            labelEl.innerHTML = esc(cat.label);
+            state[slot + 'Key'] = cat.key;
+
+            var seen = {}, options = [];
+
+            (rows || []).forEach(function (row) {
+                var v = row[cat.key];
+
+                if (v !== null && v !== undefined && v !== '' && !seen[v]) {
+                    seen[v] = true;
+                    options.push(v);
+                }
+            });
+
+            options.sort();
+
+            selectEl.innerHTML = '<option value="">All</option>' +
+                options.map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('');
+
+            selectEl.value = state[slot] || '';
+        });
+
+        var dateFieldEls = bar.querySelectorAll('.tf-date-field');
+        var hasDate = !!getColumnKeyByKeywords(columns, ['date']);
+
+        dateFieldEls.forEach(function (el) {
+            el.style.display = hasDate ? '' : 'none';
+        });
+    }
+
+    function updateTabCount(tabKey, shown, total) {
+        var bar = document.querySelector('.tab-filter-bar[data-tab-key="' + tabKey + '"]');
+        var countEl = bar ? bar.querySelector('.tf-count') : null;
+
+        if (!countEl) {
+            return;
+        }
+
+        countEl.innerHTML = shown === total ? esc(total) + ' rows' : esc(shown) + ' of ' + esc(total) + ' rows';
+    }
+
+    function renderFilteredTab(tab) {
+        var section = (currentDetailData && currentDetailData[tab.key]) || { columns: [], rows: [] };
+        var filteredRows = applyTabFilters(section, tab.key);
+
+        updateTabCount(tab.key, filteredRows.length, (section.rows || []).length);
+
+        showSectionError(tab.idRoot + 'Error', section.error || '');
+        renderHead(tab.idRoot + 'HeadRow', section.columns || []);
+        renderDynamicRows(tab.idRoot + 'Rows', section.columns || [], filteredRows, 'No ' + tab.label.toLowerCase() + ' found for this item.', tab.renderOpts);
+    }
+
+    function resetTabFilterBar(tabKey) {
+        var bar = document.querySelector('.tab-filter-bar[data-tab-key="' + tabKey + '"]');
+
+        if (!bar) {
+            return;
+        }
+
+        tabFilterState[tabKey] = { q: '', cat1: '', cat2: '', dateFrom: '', dateTo: '' };
+
+        var qI = bar.querySelector('.tf-q'); if (qI) qI.value = '';
+        var c1 = bar.querySelector('.tf-cat1'); if (c1) c1.value = '';
+        var c2 = bar.querySelector('.tf-cat2'); if (c2) c2.value = '';
+        var fI = bar.querySelector('.tf-date-from'); if (fI) fI.value = '';
+        var tI = bar.querySelector('.tf-date-to'); if (tI) tI.value = '';
+    }
+
+    function bindTabFilterBars() {
+        DETAIL_TABS.forEach(function (tab) {
+            var bar = document.querySelector('.tab-filter-bar[data-tab-key="' + tab.key + '"]');
+
+            if (!bar) {
+                return;
+            }
+
+            var qInput = bar.querySelector('.tf-q');
+            var cat1Select = bar.querySelector('.tf-cat1');
+            var cat2Select = bar.querySelector('.tf-cat2');
+            var fromInput = bar.querySelector('.tf-date-from');
+            var toInput = bar.querySelector('.tf-date-to');
+            var clearBtn = bar.querySelector('.tf-clear');
+            var qTimerLocal;
+
+            qInput.addEventListener('input', function () {
+                clearTimeout(qTimerLocal);
+                qTimerLocal = setTimeout(function () {
+                    getTabFilterState(tab.key).q = qInput.value.trim();
+                    renderFilteredTab(tab);
+                }, 250);
+            });
+
+            cat1Select.addEventListener('change', function () {
+                getTabFilterState(tab.key).cat1 = cat1Select.value;
+                renderFilteredTab(tab);
+            });
+
+            cat2Select.addEventListener('change', function () {
+                getTabFilterState(tab.key).cat2 = cat2Select.value;
+                renderFilteredTab(tab);
+            });
+
+            fromInput.addEventListener('change', function () {
+                getTabFilterState(tab.key).dateFrom = fromInput.value;
+                renderFilteredTab(tab);
+            });
+
+            toInput.addEventListener('change', function () {
+                getTabFilterState(tab.key).dateTo = toInput.value;
+                renderFilteredTab(tab);
+            });
+
+            clearBtn.addEventListener('click', function () {
+                resetTabFilterBar(tab.key);
+                renderFilteredTab(tab);
+            });
+        });
+    }
+
+    // ---- item grid ----
 
     function refreshGrid() {
         showError('');
@@ -1269,6 +1551,7 @@ tr.clickable:hover td{ background: var(--signal-soft); }
 
         currentItemId = itemId;
         currentItemViewUrl = '';
+        currentDetailData = null;
         showError('');
 
         document.getElementById('gridSection').style.display = 'none';
@@ -1277,39 +1560,20 @@ tr.clickable:hover td{ background: var(--signal-soft); }
         document.getElementById('itemTitle').innerHTML = 'Loading item...';
         document.getElementById('itemDesc').innerHTML = '';
         document.getElementById('headerGrid').innerHTML = '<div class="loading">Loading item header...</div>';
-
-        var viewRecordBtn = document.getElementById('viewRecordBtn');
-        viewRecordBtn.disabled = true;
+        document.getElementById('viewRecordBtn').disabled = true;
 
         showSectionError('headerError', '');
-        showSectionError('locationError', '');
-        showSectionError('vendorError', '');
-        showSectionError('binError', '');
-        showSectionError('inventoryNumberError', '');
-        showSectionError('transactionError', '');
-        showSectionError('committedSalesOrderError', '');
 
-        document.getElementById('locationHeadRow').innerHTML = '<th>Loading</th>';
-        document.getElementById('locationRows').innerHTML = emptyRow(1, 'Loading locations...');
-
-        document.getElementById('vendorHeadRow').innerHTML = '<th>Loading</th>';
-        document.getElementById('vendorRows').innerHTML = emptyRow(1, 'Loading vendors...');
-
-        document.getElementById('binHeadRow').innerHTML = '<th>Loading</th>';
-        document.getElementById('binRows').innerHTML = emptyRow(1, 'Loading bins...');
-
-        document.getElementById('inventoryNumberHeadRow').innerHTML = '<th>Loading</th>';
-        document.getElementById('inventoryNumberRows').innerHTML = emptyRow(1, 'Loading inventory numbers...');
-
-        document.getElementById('transactionHeadRow').innerHTML = '<th>Loading</th>';
-        document.getElementById('transactionRows').innerHTML = emptyRow(1, 'Loading related transactions...');
-
-        document.getElementById('committedSalesOrderHeadRow').innerHTML = '<th>Loading</th>';
-        document.getElementById('committedSalesOrderRows').innerHTML = emptyRow(1, 'Loading committed sales order lines...');
+        DETAIL_TABS.forEach(function (tab) {
+            showSectionError(tab.idRoot + 'Error', '');
+            document.getElementById(tab.idRoot + 'HeadRow').innerHTML = '<th>Loading</th>';
+            document.getElementById(tab.idRoot + 'Rows').innerHTML = emptyRow(1, 'Loading ' + tab.label.toLowerCase() + '...');
+        });
 
         api('itemDetail', {
             itemId: itemId
         }).then(function (data) {
+            currentDetailData = data;
             renderItemDetail(data);
         }).catch(function (e) {
             showError(e.message);
@@ -1318,10 +1582,7 @@ tr.clickable:hover td{ background: var(--signal-soft); }
     }
 
     function renderItemDetail(data) {
-        var header = data.header || {
-            columns: [],
-            rows: []
-        };
+        var header = data.header || { columns: [], rows: [] };
 
         var itemName =
             findColumnValue(header, ['itemid']) ||
@@ -1329,17 +1590,9 @@ tr.clickable:hover td{ background: var(--signal-soft); }
             firstNonEmptyValue(header) ||
             'Item Detail';
 
-        var displayName =
-            findColumnValue(header, ['displayname', 'display name']) ||
-            '';
-
-        var description =
-            findColumnValue(header, ['salesdescription', 'description']) ||
-            '';
-
-        var inactiveValue =
-            findColumnValue(header, ['isinactive', 'inactive']) ||
-            '';
+        var displayName = findColumnValue(header, ['displayname', 'display name']) || '';
+        var description = findColumnValue(header, ['salesdescription', 'description']) || '';
+        var inactiveValue = findColumnValue(header, ['isinactive', 'inactive']) || '';
 
         var isInactive =
             inactiveValue === true ||
@@ -1365,68 +1618,12 @@ tr.clickable:hover td{ background: var(--signal-soft); }
         showSectionError('headerError', header.error || '');
         renderHeaderCards(header);
 
-        var locations = data.locations || {};
-        showSectionError('locationError', locations.error || '');
-        renderHead('locationHeadRow', locations.columns || []);
-        renderDynamicRows(
-            'locationRows',
-            locations.columns || [],
-            locations.rows || [],
-            'No location inventory found for this item.'
-        );
-
-        var vendors = data.vendors || {};
-        showSectionError('vendorError', vendors.error || '');
-        renderHead('vendorHeadRow', vendors.columns || []);
-        renderDynamicRows(
-            'vendorRows',
-            vendors.columns || [],
-            vendors.rows || [],
-            'No vendor details found for this item.',
-            { clickMode: 'url', urlKey: 'vendorUrl' }
-        );
-
-        var bins = data.bins || {};
-        showSectionError('binError', bins.error || '');
-        renderHead('binHeadRow', bins.columns || []);
-        renderDynamicRows(
-            'binRows',
-            bins.columns || [],
-            bins.rows || [],
-            'No bin balance found for this item.'
-        );
-
-        var inventoryNumbers = data.inventoryNumbers || {};
-        showSectionError('inventoryNumberError', inventoryNumbers.error || '');
-        renderHead('inventoryNumberHeadRow', inventoryNumbers.columns || []);
-        renderDynamicRows(
-            'inventoryNumberRows',
-            inventoryNumbers.columns || [],
-            inventoryNumbers.rows || [],
-            'No inventory numbers found for this item.'
-        );
-
-        var transactions = data.transactions || {};
-        showSectionError('transactionError', transactions.error || '');
-        renderHead('transactionHeadRow', transactions.columns || []);
-        renderDynamicRows(
-            'transactionRows',
-            transactions.columns || [],
-            transactions.rows || [],
-            'No related transactions found for this item.',
-            { docUrlKey: 'viewUrl', entityUrlKey: 'entityUrl' }
-        );
-
-        var committedSalesOrders = data.committedSalesOrders || {};
-        showSectionError('committedSalesOrderError', committedSalesOrders.error || '');
-        renderHead('committedSalesOrderHeadRow', committedSalesOrders.columns || []);
-        renderDynamicRows(
-            'committedSalesOrderRows',
-            committedSalesOrders.columns || [],
-            committedSalesOrders.rows || [],
-            'No committed sales order lines found for this item.',
-            { docUrlKey: 'viewUrl', entityUrlKey: 'entityUrl' }
-        );
+        DETAIL_TABS.forEach(function (tab) {
+            var section = data[tab.key] || { columns: [], rows: [] };
+            resetTabFilterBar(tab.key);
+            populateFilterBar(tab.key, section.columns || [], section.rows || []);
+            renderFilteredTab(tab);
+        });
     }
 
     function renderHeaderCards(header) {
@@ -1513,6 +1710,7 @@ tr.clickable:hover td{ background: var(--signal-soft); }
         });
     });
 
+    bindTabFilterBars();
     loadFilterOptions();
     refreshGrid();
 
