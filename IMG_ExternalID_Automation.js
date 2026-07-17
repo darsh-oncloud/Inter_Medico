@@ -8,7 +8,7 @@ define(['N/record', 'N/log'], function (record, log) {
     // Add more record types here later without touching any other logic.
     var FIELD_MAP = {
         'salesorder': 'custbody_your_so_field',
-        'customer': 'custentity_your_customer_field'
+        'customer': 'custentity_external_id'
     };
 
     function afterSubmit(context) {
