@@ -8,6 +8,7 @@ define(['N/search', 'N/log'], (search, log) => {
         try {
             const rec = context.currentRecord;
             const po = (rec.getValue('otherrefnum') || '').trim();
+           log.debug('Check', po);
 
             if (!po) return true;
 
